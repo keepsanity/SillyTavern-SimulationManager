@@ -1249,11 +1249,12 @@ function escapeHtml(text) {
 }
 
 function renderResponseText(text) {
-    if (typeof marked !== 'undefined' && marked.parse) {
-        try {
-            return DOMPurify ? DOMPurify.sanitize(marked.parse(text)) : marked.parse(text);
-        } catch (e) { /* fallback */ }
-    }
+    try {
+        const context = getContext();
+        if (typeof context.messageFormatting === 'function') {
+            return context.messageFormatting(text, '', false, false, null);
+        }
+    } catch (e) { /* fallback */ }
 
     let html = escapeHtml(text);
     html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
@@ -1265,6 +1266,7 @@ function renderResponseText(text) {
     html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    html = html.replace(/~~(.+?)~~/g, '<del>$1</del>');
     html = html.replace(/(^&gt; (.+)$\n?)+/gm, (match) => {
         const lines = match.trim().split('\n').map(l => l.replace(/^&gt; /, '')).join('<br>');
         return `<blockquote>${lines}</blockquote>`;
