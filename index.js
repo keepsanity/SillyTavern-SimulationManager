@@ -11,7 +11,7 @@
  */
 
 import { extension_settings, saveMetadataDebounced, getContext } from '../../../extensions.js';
-import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders } from '../../../../script.js';
+import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, setExtensionPrompt, extension_prompt_types, extension_prompt_roles } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
 import { parseReasoningFromString } from '../../../reasoning.js';
 
@@ -1203,8 +1203,13 @@ async function handleSendSimulation() {
         const sendBtn = document.getElementById('sim-regenerate');
         if (sendBtn) sendBtn.disabled = true;
 
-        const systemPrompt = buildSimulationSystemPrompt(resolvedPrompt);
-        const rawResponse = await generateQuietPrompt({ quietPrompt: systemPrompt });
+        setupSimPrompt(resolvedPrompt);
+        let rawResponse;
+        try {
+            rawResponse = await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
+        } finally {
+            clearSimPrompt();
+        }
         console.log(DEBUG_PREFIX, 'Raw response length:', rawResponse?.length);
         const { thinking, content } = separateThinkingContent(rawResponse);
         console.log(DEBUG_PREFIX, 'Thinking length:', thinking?.length, 'Content length:', content?.length);
@@ -1229,7 +1234,6 @@ async function handleSendSimulation() {
 
 async function handleRegenerateSimulation(sim) {
     const resolvedPrompt = substituteParams(sim.promptText);
-    const systemPrompt = buildSimulationSystemPrompt(resolvedPrompt);
 
     const btn = document.getElementById('sim-regenerate');
     if (btn) {
@@ -1238,7 +1242,13 @@ async function handleRegenerateSimulation(sim) {
     }
 
     try {
-        const rawResponse = await generateQuietPrompt({ quietPrompt: systemPrompt });
+        setupSimPrompt(resolvedPrompt);
+        let rawResponse;
+        try {
+            rawResponse = await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
+        } finally {
+            clearSimPrompt();
+        }
         const { thinking, content } = separateThinkingContent(rawResponse);
         if (!sim.reasonings) sim.reasonings = [];
         sim.responses.push(content);
@@ -1261,8 +1271,21 @@ async function handleRegenerateSimulation(sim) {
     }
 }
 
-function buildSimulationSystemPrompt(resolvedPrompt) {
-    return `[System: The user has requested a simulation/what-if scenario outside the main roleplay. Generate a response based on the following request. Stay in character and maintain the established setting, personality, and tone. This is a standalone simulation and should NOT affect the main conversation.]\n\nUser's simulation request: ${resolvedPrompt}`;
+const SIM_SYSTEM_INSTRUCTION = 'The user has requested a simulation/what-if scenario outside the main roleplay. Generate a response based on the following request. Stay in character and maintain the established setting, personality, and tone. This is a standalone simulation and should NOT affect the main conversation.';
+const SIM_INJECT_KEY = 'sim_manager_inject';
+
+const SIM_INJECT_KEY_USER = 'sim_manager_inject_user';
+
+function setupSimPrompt(resolvedPrompt) {
+    // depth 1, system role → 먼저 (시스템 지시)
+    setExtensionPrompt(SIM_INJECT_KEY, SIM_SYSTEM_INSTRUCTION, extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.SYSTEM);
+    // depth 1, user role → 나중에 (시뮬 프롬프트)
+    setExtensionPrompt(SIM_INJECT_KEY_USER, resolvedPrompt, extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.USER);
+}
+
+function clearSimPrompt() {
+    setExtensionPrompt(SIM_INJECT_KEY, '', extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.SYSTEM);
+    setExtensionPrompt(SIM_INJECT_KEY_USER, '', extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.USER);
 }
 
 // ============================================
