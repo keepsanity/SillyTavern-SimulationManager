@@ -501,6 +501,10 @@
     color: var(--SmartThemeBodyColor, #fff);
 }
 
+.sim-response-text q {
+    quotes: none;
+}
+
 .sim-response-text hr {
     border: none;
     border-top: 1px solid var(--SmartThemeBorderColor, #444);
