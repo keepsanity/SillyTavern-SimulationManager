@@ -493,16 +493,30 @@
     tab-size: 4;
 }
 
-.sim-response-text em {
-    color: var(--SmartThemeEmColor, var(--SmartThemeBodyColor, #ddd));
+.sim-response-text em,
+.sim-response-text i {
+    color: var(--SmartThemeEmColor);
 }
 
-.sim-response-text strong {
-    color: var(--SmartThemeBodyColor, #fff);
+.sim-response-text q em,
+.sim-response-text q i {
+    color: inherit;
 }
 
 .sim-response-text q {
     quotes: none;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.sim-response-text u {
+    color: var(--SmartThemeUnderlineColor);
+}
+
+.sim-response-text font[color] em,
+.sim-response-text font[color] i,
+.sim-response-text font[color] u,
+.sim-response-text font[color] q {
+    color: inherit;
 }
 
 .sim-response-text hr {
