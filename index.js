@@ -13,6 +13,7 @@
 import { extension_settings, saveMetadataDebounced, getContext } from '../../../extensions.js';
 import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
+import { parseReasoningFromString } from '../../../reasoning.js';
 
 const EXTENSION_NAME = 'SillyTavern-SimulationManager';
 const DEBUG_PREFIX = '[SimManager]';
@@ -521,6 +522,7 @@ function renderDetailView() {
                     <button class="sim-btn sim-btn-primary" id="sim-edit-response-save">저장</button>
                 </div>
             ` : `
+                ${renderThinkingBlock(sim, currentIdx)}
                 <div class="sim-response-text ${responseCount === 0 ? 'loading' : ''}" id="sim-response-display">
                     ${responseCount === 0 ? '아직 응답이 없습니다...' : renderResponseText(getDisplayResponse(sim, currentIdx))}
                 </div>
@@ -875,6 +877,7 @@ function renderGlobalDetailView() {
                     <button class="sim-btn sim-btn-primary" id="sim-gv-edit-response-save">저장</button>
                 </div>
             ` : `
+                ${renderThinkingBlock(sim, currentIdx)}
                 <div class="sim-response-text ${responseCount === 0 ? 'loading' : ''}">
                     ${responseCount === 0 ? '응답 없음' : renderResponseText(getDisplayResponse(sim, currentIdx))}
                 </div>
@@ -1193,9 +1196,14 @@ async function handleSendSimulation() {
         if (sendBtn) sendBtn.disabled = true;
 
         const systemPrompt = buildSimulationSystemPrompt(resolvedPrompt);
-        const response = await generateQuietPrompt({ quietPrompt: systemPrompt });
+        const rawResponse = await generateQuietPrompt({ quietPrompt: systemPrompt });
+        console.log(DEBUG_PREFIX, 'Raw response length:', rawResponse?.length);
+        const { thinking, content } = separateThinkingContent(rawResponse);
+        console.log(DEBUG_PREFIX, 'Thinking length:', thinking?.length, 'Content length:', content?.length);
 
-        sim.responses.push(response);
+        if (!sim.reasonings) sim.reasonings = [];
+        sim.responses.push(content);
+        sim.reasonings.push(thinking);
         sim.currentIndex = 0;
         saveSimulations();
 
@@ -1222,8 +1230,11 @@ async function handleRegenerateSimulation(sim) {
     }
 
     try {
-        const response = await generateQuietPrompt({ quietPrompt: systemPrompt });
-        sim.responses.push(response);
+        const rawResponse = await generateQuietPrompt({ quietPrompt: systemPrompt });
+        const { thinking, content } = separateThinkingContent(rawResponse);
+        if (!sim.reasonings) sim.reasonings = [];
+        sim.responses.push(content);
+        sim.reasonings.push(thinking);
         sim.currentIndex = sim.responses.length - 1;
         saveSimulations();
 
@@ -1450,11 +1461,85 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+/**
+ * thinking과 본문을 분리하여 반환
+ * @returns {{ thinking: string, content: string }}
+ */
+function separateThinkingContent(text) {
+    if (!text) return { thinking: '', content: text || '' };
+    let thinking = '';
+    let content = text;
+
+    // 1. SillyTavern 내장 파서 시도 (prefix/suffix 기반)
+    try {
+        if (typeof parseReasoningFromString === 'function') {
+            const parsed = parseReasoningFromString(content, { strict: false });
+            if (parsed && parsed.content && parsed.content.trim().length > 0) {
+                thinking = parsed.reasoning || '';
+                content = parsed.content;
+                return { thinking: thinking.trim(), content: content.trim() };
+            }
+        }
+    } catch (e) { /* fallback */ }
+
+    // 2. <think>...</think> 패턴
+    const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/i);
+    if (thinkMatch) {
+        thinking = thinkMatch[1];
+        content = content.replace(/<think>[\s\S]*?<\/think>/gi, '');
+        return { thinking: thinking.trim(), content: content.trim() };
+    }
+
+    // 3. <Thinking>...</Thinking> 패턴
+    const thinkingMatch = content.match(/<Thinking>([\s\S]*?)<\/Thinking>/i);
+    if (thinkingMatch) {
+        thinking = thinkingMatch[1];
+        content = content.replace(/<Thinking>[\s\S]*?<\/Thinking>/gi, '');
+        return { thinking: thinking.trim(), content: content.trim() };
+    }
+
+    // 4. "think\n..." Gemini 패턴 (빈 줄 2개로 본문 시작)
+    const geminiMatch = content.match(/^think\n([\s\S]*?)\n\n/i);
+    if (geminiMatch) {
+        thinking = geminiMatch[1];
+        content = content.replace(/^think\n[\s\S]*?\n\n/i, '');
+        return { thinking: thinking.trim(), content: content.trim() };
+    }
+
+    return { thinking: '', content: content.trim() };
+}
+
+function renderThinkingBlock(sim, index) {
+    // reasonings 배열에서 가져오기
+    let thinking = sim.reasonings?.[index] || '';
+
+    // reasonings 배열이 없는 기존 데이터는 응답에서 추출 시도
+    if (!thinking && sim.responses?.[index]) {
+        const separated = separateThinkingContent(sim.responses[index]);
+        thinking = separated.thinking;
+    }
+
+    if (!thinking) return '';
+
+    const thinkingHtml = escapeHtml(thinking).replace(/\n/g, '<br>');
+    return `<details class="sim-thinking-block">
+        <summary class="sim-thinking-summary">
+            <i class="fa-solid fa-brain"></i> Thinking
+            <i class="fa-solid fa-chevron-down sim-thinking-arrow"></i>
+        </summary>
+        <div class="sim-thinking-content">${thinkingHtml}</div>
+    </details>`;
+}
+
 function renderResponseText(text) {
+    // 기존 데이터에 thinking이 섞여 있을 수 있으므로 본문만 추출
+    const separated = separateThinkingContent(text);
+    text = separated.content;
     try {
         const context = getContext();
         if (typeof context.messageFormatting === 'function') {
-            return context.messageFormatting(text, '', false, false, null);
+            const result = context.messageFormatting(text, '', false, false, -1);
+            if (result && result.length > 0) return result;
         }
     } catch (e) { /* fallback */ }
 
