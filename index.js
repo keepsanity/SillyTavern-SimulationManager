@@ -352,22 +352,30 @@ function renderListView() {
     if (sims.length === 0) {
         html += `<div class="sim-empty"><i class="fa-solid fa-flask" style="font-size:32px; margin-bottom:12px; opacity:0.3;"></i><br>아직 시뮬레이션이 없습니다.<br>위 버튼을 눌러 새로 만들어보세요.</div>`;
     } else {
+        ensureSettings();
+        const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+        let needsSave = false;
         const sorted = [...sims].reverse();
         for (const sim of sorted) {
             const responseCount = sim.responses ? sim.responses.length : 0;
             const date = new Date(sim.createdAt).toLocaleString();
-            const promptPreview = sim.promptText.length > 80
+            const found = savedPrompts.find(p => p.content === sim.promptText);
+            if (found && sim.promptName !== found.name) {
+                sim.promptName = found.name; needsSave = true;
+            }
+            const displayName = sim.promptName || (sim.promptText.length > 80
                 ? sim.promptText.substring(0, 80) + '...'
-                : sim.promptText;
+                : sim.promptText);
             html += `
             <div class="sim-item" data-sim-id="${sim.id}">
-                <div class="sim-item-prompt">${escapeHtml(promptPreview)}</div>
+                <div class="sim-item-prompt">${escapeHtml(displayName)}</div>
                 <div class="sim-item-meta">
                     <span>${date}</span>
                     <span>답변 ${responseCount}개</span>
                 </div>
             </div>`;
         }
+        if (needsSave) saveSimulations();
     }
     html += `</div>`;
     container.innerHTML = html;
@@ -740,15 +748,21 @@ function renderGlobalSimListView() {
     if (sorted.length === 0) {
         html += `<div class="sim-empty">시뮬레이션이 없습니다.</div>`;
     } else {
+        ensureSettings();
+        const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
         for (const sim of sorted) {
             const responseCount = sim.responses ? sim.responses.length : 0;
             const date = new Date(sim.createdAt).toLocaleString();
-            const promptPreview = sim.promptText.length > 60
+            const found = savedPrompts.find(p => p.content === sim.promptText);
+            if (found && sim.promptName !== found.name) {
+                sim.promptName = found.name;
+            }
+            const displayName = sim.promptName || (sim.promptText.length > 60
                 ? sim.promptText.substring(0, 60) + '...'
-                : sim.promptText;
+                : sim.promptText);
             html += `
                 <div class="sim-item sim-global-item" data-sim-id="${sim.id}">
-                    <div class="sim-item-prompt">${escapeHtml(promptPreview)}</div>
+                    <div class="sim-item-prompt">${escapeHtml(displayName)}</div>
                     <div class="sim-item-meta">
                         <span>${date}</span>
                         <span>답변 ${responseCount}개</span>
@@ -1137,9 +1151,16 @@ async function handleSendSimulation() {
 
     const resolvedPrompt = substituteParams(rawPrompt);
 
+    // 프롬프트 이름 자동 매칭
+    ensureSettings();
+    const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const matchedPrompt = savedPrompts.find(p => p.content === rawPrompt);
+    const promptName = matchedPrompt ? matchedPrompt.name : '';
+
     const sim = {
         id: `sim_${uuidv4()}`,
         promptText: rawPrompt,
+        promptName: promptName,
         responses: [],
         currentIndex: 0,
         createdAt: Date.now(),
@@ -1150,8 +1171,6 @@ async function handleSendSimulation() {
     saveSimulations();
 
     // 보낸 프롬프트 자동 저장
-    ensureSettings();
-    const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
     const alreadySaved = savedPrompts.some(p => p.content === rawPrompt);
     if (!alreadySaved) {
         savedPrompts.push({
