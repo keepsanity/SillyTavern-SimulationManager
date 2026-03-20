@@ -543,6 +543,11 @@
     background: rgba(255, 255, 255, 0.05);
 }
 
+/* ---- Translation ---- */
+.sim-translate-btn i.fa-language {
+    font-size: 14px;
+}
+
 .sim-detail-actions {
     display: flex;
     gap: 8px;

@@ -24,6 +24,11 @@ const defaultSettings = {
     savedPrompts: [],
     notificationsEnabled: true,
     globalSimulations: {}, // { chatKey: { chatName, simulations: [...] } }
+    // 번역 설정
+    translationEnabled: false,
+    translationTargetLang: '한국어',
+    translationCustomPrompt: '',
+    translationProfileId: '',
 };
 
 function ensureSettings() {
@@ -34,6 +39,10 @@ function ensureSettings() {
     if (!Array.isArray(s.savedPrompts)) s.savedPrompts = [];
     if (typeof s.notificationsEnabled !== 'boolean') s.notificationsEnabled = true;
     if (!s.globalSimulations || typeof s.globalSimulations !== 'object') s.globalSimulations = {};
+    if (typeof s.translationEnabled !== 'boolean') s.translationEnabled = false;
+    if (!s.translationTargetLang) s.translationTargetLang = '한국어';
+    if (typeof s.translationCustomPrompt !== 'string') s.translationCustomPrompt = '';
+    if (typeof s.translationProfileId !== 'string') s.translationProfileId = '';
 }
 
 function getSimulations() {
@@ -245,6 +254,10 @@ let globalViewSimIndex = 0;
 let isEditingGlobalPrompt = false;
 let isEditingGlobalResponse = false;
 
+// Translation state
+let showTranslated = false; // true면 번역 보기, false면 원문 보기
+let isTranslating = false;
+
 // ============================================
 // HTML Builders
 // ============================================
@@ -284,6 +297,20 @@ function buildSettingsHTML() {
                     <button class="sim-btn sim-btn-primary" id="sim-global-viewer-btn" style="width:100%; margin-bottom:12px; padding:10px;">
                         <i class="fa-solid fa-layer-group"></i> 시뮬레이션 모아보기
                     </button>
+                    <hr />
+                    <h4 style="margin:8px 0 4px; font-size:14px;">번역 설정</h4>
+                    <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+                        <input type="checkbox" id="sim-translation-toggle" />
+                        응답 번역 기능 사용
+                    </label>
+                    <div id="sim-translation-settings" style="display:none; margin-bottom:8px;">
+                        <label style="font-size:12px; color:#aaa;">Connection Profile</label>
+                        <select id="sim-translation-profile" class="text_pole connection_profile" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;"></select>
+                        <label style="font-size:12px; color:#aaa;">번역 대상 언어</label>
+                        <input type="text" id="sim-translation-lang" placeholder="한국어" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;" />
+                        <label style="font-size:12px; color:#aaa;">커스텀 번역 프롬프트 (선택)</label>
+                        <textarea id="sim-translation-prompt" placeholder="비워두면 기본 프롬프트 사용" style="width:100%; min-height:60px; padding:10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; resize:vertical; font-family:inherit; line-height:1.5;"></textarea>
+                    </div>
                     <hr />
                     <h4 style="margin:8px 0 4px; font-size:14px;">저장된 시뮬 프롬프트</h4>
                     <select id="sim-prompt-select" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;"></select>
@@ -474,6 +501,7 @@ function renderDetailView() {
             </div>
             ${responseCount > 0 && !isEditingResponse ? `
             <div class="sim-response-actions-row">
+                ${buildTranslateButtonHTML(sim, currentIdx)}
                 <button class="sim-btn-icon" id="sim-edit-response-btn" title="응답 수정"><i class="fa-solid fa-pen"></i> 수정</button>
                 ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
             </div>
@@ -486,7 +514,7 @@ function renderDetailView() {
                 </div>
             ` : `
                 <div class="sim-response-text ${responseCount === 0 ? 'loading' : ''}" id="sim-response-display">
-                    ${responseCount === 0 ? '아직 응답이 없습니다...' : renderResponseText(currentResponse)}
+                    ${responseCount === 0 ? '아직 응답이 없습니다...' : renderResponseText(getDisplayResponse(sim, currentIdx))}
                 </div>
             `}
         </div>
@@ -565,6 +593,7 @@ function renderDetailView() {
         if (sim.currentIndex > 0) {
             sim.currentIndex--;
             isEditingResponse = false;
+            showTranslated = false;
             saveSimulations();
             renderDetailView();
         }
@@ -574,6 +603,7 @@ function renderDetailView() {
         if (sim.currentIndex < sim.responses.length - 1) {
             sim.currentIndex++;
             isEditingResponse = false;
+            showTranslated = false;
             saveSimulations();
             renderDetailView();
         }
@@ -597,12 +627,24 @@ function renderDetailView() {
     document.getElementById('sim-delete-response')?.addEventListener('click', () => {
         if (confirm('현재 보고 있는 답변을 삭제하시겠습니까?')) {
             sim.responses.splice(sim.currentIndex, 1);
+            // 번역도 삭제
+            if (sim.translations) delete sim.translations[String(sim.currentIndex)];
             if (sim.currentIndex >= sim.responses.length) {
                 sim.currentIndex = Math.max(0, sim.responses.length - 1);
             }
             saveSimulations();
             renderDetailView();
         }
+    });
+
+    // 번역 버튼
+    container.querySelector('.sim-translate-btn')?.addEventListener('click', () => {
+        translateResponse(sim, currentIdx, renderDetailView);
+    });
+    container.querySelector('.sim-retranslate-btn')?.addEventListener('click', () => {
+        if (sim.translations) delete sim.translations[String(currentIdx)];
+        showTranslated = false;
+        translateResponse(sim, currentIdx, renderDetailView);
     });
 }
 
@@ -807,6 +849,7 @@ function renderGlobalDetailView() {
             </div>
             ${responseCount > 0 && !isEditingGlobalResponse ? `
             <div class="sim-response-actions-row">
+                ${buildTranslateButtonHTML(sim, currentIdx)}
                 <button class="sim-btn-icon" id="sim-gv-edit-response-btn" title="응답 수정"><i class="fa-solid fa-pen"></i> 수정</button>
                 ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-gv-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
             </div>
@@ -819,7 +862,7 @@ function renderGlobalDetailView() {
                 </div>
             ` : `
                 <div class="sim-response-text ${responseCount === 0 ? 'loading' : ''}">
-                    ${responseCount === 0 ? '응답 없음' : renderResponseText(currentResponse)}
+                    ${responseCount === 0 ? '응답 없음' : renderResponseText(getDisplayResponse(sim, currentIdx))}
                 </div>
             `}
         </div>
@@ -849,6 +892,7 @@ function renderGlobalDetailView() {
         if (globalViewSimIndex > 0) {
             globalViewSimIndex--;
             isEditingGlobalResponse = false;
+            showTranslated = false;
             renderGlobalDetailView();
         }
     });
@@ -857,6 +901,7 @@ function renderGlobalDetailView() {
         if (globalViewSimIndex < responseCount - 1) {
             globalViewSimIndex++;
             isEditingGlobalResponse = false;
+            showTranslated = false;
             renderGlobalDetailView();
         }
     });
@@ -911,12 +956,23 @@ function renderGlobalDetailView() {
     document.getElementById('sim-gv-delete-response')?.addEventListener('click', () => {
         if (confirm('현재 보고 있는 답변을 삭제하시겠습니까?')) {
             sim.responses.splice(currentIdx, 1);
+            if (sim.translations) delete sim.translations[String(currentIdx)];
             if (globalViewSimIndex >= sim.responses.length) {
                 globalViewSimIndex = Math.max(0, sim.responses.length - 1);
             }
             saveSettingsDebounced();
             renderGlobalDetailView();
         }
+    });
+
+    // 번역 버튼
+    container.querySelector('.sim-translate-btn')?.addEventListener('click', () => {
+        translateResponse(sim, currentIdx, renderGlobalDetailView);
+    });
+    container.querySelector('.sim-retranslate-btn')?.addEventListener('click', () => {
+        if (sim.translations) delete sim.translations[String(currentIdx)];
+        showTranslated = false;
+        translateResponse(sim, currentIdx, renderGlobalDetailView);
     });
 
     // 시뮬 삭제
@@ -937,6 +993,133 @@ function renderGlobalDetailView() {
             }
         }
     });
+}
+
+// ============================================
+// Translation
+// ============================================
+function buildTranslationPrompt(text) {
+    ensureSettings();
+    const s = extension_settings[EXTENSION_NAME];
+    const targetLang = s.translationTargetLang || '한국어';
+    const customPrompt = s.translationCustomPrompt?.trim();
+
+    if (customPrompt) {
+        return `${customPrompt}\n\nTarget language: ${targetLang}\n\nText to translate:\n${text}`;
+    }
+
+    return `[System: Translate the following text into ${targetLang}. Output ONLY the translated text, without any additional commentary, explanation, or notes. Preserve the original formatting, line breaks, and markdown syntax exactly.]\n\n${text}`;
+}
+
+async function translateResponse(sim, responseIndex, renderFn) {
+    if (isTranslating) return;
+
+    if (!sim.translations) sim.translations = {};
+    const key = String(responseIndex);
+
+    // 이미 번역이 있으면 토글만
+    if (sim.translations[key]) {
+        showTranslated = !showTranslated;
+        renderFn();
+        return;
+    }
+
+    const responseText = sim.responses[responseIndex];
+    if (!responseText) return;
+
+    ensureSettings();
+    const s = extension_settings[EXTENSION_NAME];
+    const profileId = s.translationProfileId;
+
+    if (!profileId) {
+        if (typeof toastr !== 'undefined') toastr.warning('번역 프로필을 설정해주세요.', '시뮬 매니저');
+        return;
+    }
+
+    const context = getContext();
+    if (!context.ConnectionManagerRequestService) {
+        if (typeof toastr !== 'undefined') toastr.error('Connection Manager가 필요합니다.', '시뮬 매니저');
+        return;
+    }
+
+    isTranslating = true;
+    renderFn(); // 로딩 UI 반영
+
+    try {
+        const prompt = buildTranslationPrompt(responseText);
+        const messages = [
+            { role: 'system', content: 'You are a professional translator. Output ONLY the translated text without any commentary.' },
+            { role: 'user', content: prompt },
+        ];
+
+        const response = await context.ConnectionManagerRequestService.sendRequest(
+            profileId,
+            messages,
+            8192,
+            { stream: false, extractData: true, includePreset: false, includeInstruct: false },
+        );
+
+        let translated = '';
+        if (typeof response === 'string') {
+            translated = response;
+        } else if (response?.choices?.[0]?.message) {
+            translated = response.choices[0].message.content || '';
+        } else {
+            translated = response?.content || response?.message || '';
+        }
+
+        if (!translated) throw new Error('번역 결과가 비어있습니다.');
+
+        if (!sim.translations) sim.translations = {};
+        sim.translations[key] = translated;
+        showTranslated = true;
+
+        // 저장
+        if (currentView === 'detail') {
+            saveSimulations();
+        } else {
+            saveSettingsDebounced();
+        }
+
+        if (typeof toastr !== 'undefined') toastr.success('번역 완료!', '시뮬 매니저');
+    } catch (err) {
+        console.error(DEBUG_PREFIX, 'Translation failed:', err);
+        if (typeof toastr !== 'undefined') toastr.error(`번역 실패: ${err.message}`, '시뮬 매니저');
+    } finally {
+        isTranslating = false;
+        renderFn();
+    }
+}
+
+function buildTranslateButtonHTML(sim, responseIndex) {
+    ensureSettings();
+    if (!extension_settings[EXTENSION_NAME].translationEnabled) return '';
+
+    if (!sim.translations) sim.translations = {};
+    const hasTranslation = !!sim.translations[String(responseIndex)];
+
+    if (isTranslating) {
+        return `<button class="sim-btn-icon sim-translate-btn" disabled><i class="fa-solid fa-spinner fa-spin"></i> 번역 중...</button>`;
+    }
+
+    if (hasTranslation) {
+        return `
+            <button class="sim-btn-icon sim-translate-btn" title="번역">
+                <i class="fa-solid fa-language"></i> ${showTranslated ? '원문 보기' : '번역 보기'}
+            </button>
+            <button class="sim-btn-icon sim-retranslate-btn" title="다시 번역">
+                <i class="fa-solid fa-rotate-right"></i> 재번역
+            </button>`;
+    }
+
+    return `<button class="sim-btn-icon sim-translate-btn" title="번역"><i class="fa-solid fa-language"></i> 번역</button>`;
+}
+
+function getDisplayResponse(sim, responseIndex) {
+    if (!sim.translations) return sim.responses[responseIndex] || '';
+    const translated = sim.translations[String(responseIndex)];
+    if (showTranslated && translated) return translated;
+    return sim.responses[responseIndex] || '';
 }
 
 // ============================================
@@ -1313,6 +1496,54 @@ function renderResponseText(text) {
                 extension_settings[EXTENSION_NAME].notificationsEnabled = toggle.checked;
                 saveSettingsDebounced();
             });
+        }
+
+        // 번역 설정 초기화
+        const transToggle = document.getElementById('sim-translation-toggle');
+        const transSettings = document.getElementById('sim-translation-settings');
+        const transLang = document.getElementById('sim-translation-lang');
+        const transPrompt = document.getElementById('sim-translation-prompt');
+
+        if (transToggle) {
+            transToggle.checked = extension_settings[EXTENSION_NAME].translationEnabled;
+            if (transSettings) transSettings.style.display = transToggle.checked ? '' : 'none';
+            transToggle.addEventListener('change', () => {
+                extension_settings[EXTENSION_NAME].translationEnabled = transToggle.checked;
+                if (transSettings) transSettings.style.display = transToggle.checked ? '' : 'none';
+                saveSettingsDebounced();
+            });
+        }
+        if (transLang) {
+            transLang.value = extension_settings[EXTENSION_NAME].translationTargetLang || '한국어';
+            transLang.addEventListener('input', () => {
+                extension_settings[EXTENSION_NAME].translationTargetLang = transLang.value.trim() || '한국어';
+                saveSettingsDebounced();
+            });
+        }
+        if (transPrompt) {
+            transPrompt.value = extension_settings[EXTENSION_NAME].translationCustomPrompt || '';
+            transPrompt.addEventListener('input', () => {
+                extension_settings[EXTENSION_NAME].translationCustomPrompt = transPrompt.value;
+                saveSettingsDebounced();
+            });
+        }
+
+        // Connection Profile 드롭다운 초기화
+        try {
+            const context = getContext();
+            if (context.ConnectionManagerRequestService) {
+                context.ConnectionManagerRequestService.handleDropdown(
+                    '#sim-translation-profile',
+                    extension_settings[EXTENSION_NAME].translationProfileId || '',
+                    (profile) => {
+                        extension_settings[EXTENSION_NAME].translationProfileId = profile?.id ?? '';
+                        saveSettingsDebounced();
+                        console.log(DEBUG_PREFIX, '번역 프로필 변경:', profile?.name || '없음');
+                    },
+                );
+            }
+        } catch (e) {
+            console.warn(DEBUG_PREFIX, 'Connection Manager not available:', e);
         }
 
         bindSettingsEvents();
