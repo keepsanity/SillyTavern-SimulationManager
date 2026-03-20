@@ -275,6 +275,30 @@
     background: rgba(124, 131, 255, 0.05);
 }
 
+.sim-prompt-toggle {
+    /* details 기본 마커 제거 */
+}
+
+.sim-prompt-toggle > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+}
+
+.sim-prompt-toggle > summary::-webkit-details-marker {
+    display: none;
+}
+
+.sim-prompt-arrow {
+    font-size: 10px;
+    transition: transform 0.2s;
+    margin-right: 4px;
+}
+
+.sim-prompt-toggle[open] .sim-prompt-arrow {
+    transform: rotate(90deg);
+}
+
 .sim-detail-prompt-header {
     display: flex;
     align-items: center;

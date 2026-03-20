@@ -480,11 +480,13 @@ function renderDetailView() {
             </div>`;
     } else {
         promptBoxContent = `
-            <div class="sim-detail-prompt-header">
-                <div class="sim-detail-prompt-label">시뮬 요청</div>
-                <button class="sim-btn-icon" id="sim-edit-prompt-btn" title="수정"><i class="fa-solid fa-pen"></i> 수정</button>
-            </div>
-            <div class="sim-detail-prompt-text">${escapeHtml(sim.promptText)}</div>`;
+            <details class="sim-prompt-toggle">
+                <summary class="sim-detail-prompt-header">
+                    <div class="sim-detail-prompt-label"><i class="fa-solid fa-chevron-right sim-prompt-arrow"></i> 시뮬 요청</div>
+                    <button class="sim-btn-icon" id="sim-edit-prompt-btn" title="수정"><i class="fa-solid fa-pen"></i> 수정</button>
+                </summary>
+                <div class="sim-detail-prompt-text">${escapeHtml(sim.promptText)}</div>
+            </details>`;
     }
 
     const html = `
@@ -547,7 +549,9 @@ function renderDetailView() {
     document.getElementById('sim-back-to-list')?.addEventListener('click', goToList);
 
     // 수정 관련 이벤트
-    document.getElementById('sim-edit-prompt-btn')?.addEventListener('click', () => {
+    document.getElementById('sim-edit-prompt-btn')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         isEditingPrompt = true;
         renderDetailView();
     });
@@ -831,11 +835,13 @@ function renderGlobalDetailView() {
             </div>`;
     } else {
         promptBoxContent = `
-            <div class="sim-detail-prompt-header">
-                <div class="sim-detail-prompt-label">시뮬 요청</div>
-                <button class="sim-btn-icon" id="sim-gv-edit-prompt-btn" title="수정"><i class="fa-solid fa-pen"></i> 수정</button>
-            </div>
-            <div class="sim-detail-prompt-text">${escapeHtml(sim.promptText)}</div>`;
+            <details class="sim-prompt-toggle">
+                <summary class="sim-detail-prompt-header">
+                    <div class="sim-detail-prompt-label"><i class="fa-solid fa-chevron-right sim-prompt-arrow"></i> 시뮬 요청</div>
+                    <button class="sim-btn-icon" id="sim-gv-edit-prompt-btn" title="수정"><i class="fa-solid fa-pen"></i> 수정</button>
+                </summary>
+                <div class="sim-detail-prompt-text">${escapeHtml(sim.promptText)}</div>
+            </details>`;
     }
 
     const html = `
@@ -924,7 +930,9 @@ function renderGlobalDetailView() {
     });
 
     // 프롬프트 수정
-    document.getElementById('sim-gv-edit-prompt-btn')?.addEventListener('click', () => {
+    document.getElementById('sim-gv-edit-prompt-btn')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         isEditingGlobalPrompt = true;
         renderGlobalDetailView();
     });
