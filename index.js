@@ -314,6 +314,7 @@ function buildSettingsHTML() {
                     </div>
                     <hr />
                     <h4 style="margin:8px 0 4px; font-size:14px;">저장된 시뮬 프롬프트</h4>
+                    <input type="text" class="sim-prompt-search" id="sim-settings-prompt-search" placeholder="프롬프트 검색 (제목/내용)" />
                     <select id="sim-prompt-select" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;"></select>
                     <div id="sim-prompt-edit-area" style="display:flex; flex-direction:column; gap:8px;">
                         <label style="font-size:12px; color:#aaa;">프롬프트 이름</label>
@@ -418,6 +419,7 @@ function renderCreateView() {
         </button>
 
         <label>저장된 프롬프트 불러오기</label>
+        <input type="text" class="sim-prompt-search" id="sim-prompt-search" placeholder="프롬프트 검색 (제목/내용)" />
         <select class="sim-saved-prompts-select" id="sim-load-prompt">
             ${selectOptions}
         </select>
@@ -440,6 +442,19 @@ function renderCreateView() {
 
     document.getElementById('sim-back-to-list')?.addEventListener('click', goToList);
     document.getElementById('sim-cancel-create')?.addEventListener('click', goToList);
+
+    document.getElementById('sim-prompt-search')?.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase().trim();
+        const select = document.getElementById('sim-load-prompt');
+        if (!select) return;
+        let options = `<option value="">-- 직접 입력 --</option>`;
+        for (const p of savedPrompts) {
+            if (!query || p.name.toLowerCase().includes(query) || p.content.toLowerCase().includes(query)) {
+                options += `<option value="${p.id}">${escapeHtml(p.name)}</option>`;
+            }
+        }
+        select.innerHTML = options;
+    });
 
     document.getElementById('sim-load-prompt')?.addEventListener('change', (e) => {
         const promptId = e.target.value;
@@ -1430,6 +1445,22 @@ function bindSettingsEvents() {
     const select = document.getElementById('sim-prompt-select');
     const saveBtn = document.getElementById('sim-save-prompt-btn');
     const deleteBtn = document.getElementById('sim-delete-prompt-btn');
+
+    document.getElementById('sim-settings-prompt-search')?.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase().trim();
+        if (!select) return;
+        ensureSettings();
+        const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
+        let options = `<option value="">-- 새 프롬프트 --</option>`;
+        for (const p of prompts) {
+            if (!query || p.name.toLowerCase().includes(query) || p.content.toLowerCase().includes(query)) {
+                options += `<option value="${p.id}">${escapeHtml(p.name)}</option>`;
+            }
+        }
+        select.innerHTML = options;
+        selectedPromptId = null;
+        renderSettingsSavedPrompts();
+    });
 
     select?.addEventListener('change', () => {
         selectedPromptId = select.value || null;
