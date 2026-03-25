@@ -11,7 +11,7 @@
  */
 
 import { extension_settings, saveMetadataDebounced, getContext } from '../../../extensions.js';
-import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, setExtensionPrompt, extension_prompt_types, extension_prompt_roles } from '../../../../script.js';
+import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, setExtensionPrompt, extension_prompt_types, extension_prompt_roles, doNewChat, chat, saveChatConditional, printMessages } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
 import { parseReasoningFromString } from '../../../reasoning.js';
 
@@ -513,6 +513,7 @@ function renderDetailView() {
             ${responseCount > 0 && !isEditingResponse ? `
             <div class="sim-response-actions-row">
                 ${buildTranslateButtonHTML(sim, currentIdx)}
+                <button class="sim-btn-icon" id="sim-new-chat-btn" title="이 응답으로 새 챗 시작"><i class="fa-solid fa-comment-dots"></i> 새 챗</button>
                 <button class="sim-btn-icon" id="sim-edit-response-btn" title="응답 수정"><i class="fa-solid fa-pen"></i> 수정</button>
                 ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
             </div>
@@ -541,7 +542,7 @@ function renderDetailView() {
         footer.innerHTML = `
         <div class="sim-detail-actions">
             <button class="sim-btn sim-btn-sm sim-btn-danger" id="sim-delete-sim"><i class="fa-solid fa-trash"></i> 시뮬 삭제</button>
-            <button class="sim-btn sim-btn-sm sim-btn-primary" id="sim-regenerate"><i class="fa-solid fa-rotate-right"></i> 답변 추가 생성</button>
+            <button class="sim-btn sim-btn-sm sim-btn-primary" id="sim-regenerate"><i class="fa-solid fa-rotate-right"></i> 답변 재생성</button>
         </div>`;
     }
 
@@ -574,6 +575,13 @@ function renderDetailView() {
         saveSimulations();
         renderDetailView();
         if (typeof toastr !== 'undefined') toastr.success('시뮬 내용이 수정되었습니다.', '시뮬 매니저');
+    });
+
+    // 새 챗으로 시작
+    document.getElementById('sim-new-chat-btn')?.addEventListener('click', async () => {
+        const responseText = sim.responses[sim.currentIndex];
+        if (!responseText) return;
+        showNewChatDialog(sim.promptText, responseText);
     });
 
     // 응답 수정 관련 이벤트
@@ -1263,10 +1271,10 @@ async function handleRegenerateSimulation(sim) {
         showSimNotification(sim);
     } catch (err) {
         console.error(DEBUG_PREFIX, 'Regeneration failed:', err);
-        toastr.error('답변 추가 생성에 실패했습니다.', '시뮬 매니저');
+        toastr.error('답변 재생성에 실패했습니다.', '시뮬 매니저');
         if (btn) {
             btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> 답변 추가 생성';
+            btn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> 답변 재생성';
         }
     }
 }
@@ -1286,6 +1294,84 @@ function setupSimPrompt(resolvedPrompt) {
 function clearSimPrompt() {
     setExtensionPrompt(SIM_INJECT_KEY, '', extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.SYSTEM);
     setExtensionPrompt(SIM_INJECT_KEY_USER, '', extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.USER);
+}
+
+function showNewChatDialog(promptText, responseText) {
+    const overlay = document.createElement('div');
+    overlay.className = 'sim-dialog-overlay';
+    overlay.innerHTML = `
+        <div class="sim-dialog-box">
+            <div class="sim-dialog-title">새 챗 시작</div>
+            <div class="sim-dialog-desc">이 시뮬 응답을 그리팅으로 새 챗을 시작합니다.</div>
+            <div class="sim-dialog-buttons">
+                <button class="sim-btn" id="sim-newchat-response-only">응답만</button>
+                <button class="sim-btn" id="sim-newchat-with-request">요청 포함</button>
+                <button class="sim-btn sim-btn-muted" id="sim-newchat-cancel">취소</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#sim-newchat-response-only').addEventListener('click', async () => {
+        overlay.remove();
+        await startNewChatWithGreeting(null, responseText);
+    });
+    overlay.querySelector('#sim-newchat-with-request').addEventListener('click', async () => {
+        overlay.remove();
+        await startNewChatWithGreeting(promptText, responseText);
+    });
+    overlay.querySelector('#sim-newchat-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+async function startNewChatWithGreeting(promptText, responseText) {
+    try {
+        await doNewChat();
+        const context = getContext();
+
+        // 요청 포함 시: 유저 메시지 먼저 추가
+        if (promptText) {
+            // 기존 그리팅(chat[0]) 제거
+            if (chat.length > 0) chat.splice(0, chat.length);
+            chat.push({
+                name: context.name1,
+                is_user: true,
+                is_system: false,
+                send_date: new Date().toISOString(),
+                mes: promptText,
+                extra: {},
+            });
+            chat.push({
+                name: context.name2,
+                is_user: false,
+                is_system: false,
+                send_date: new Date().toISOString(),
+                mes: responseText,
+                extra: {},
+            });
+        } else {
+            // 응답만: 그리팅을 시뮬 응답으로 교체
+            if (chat.length > 0) {
+                chat[0].mes = responseText;
+                chat[0].swipes = [responseText];
+                chat[0].swipe_id = 0;
+            } else {
+                chat.push({
+                    name: context.name2,
+                    is_user: false,
+                    is_system: false,
+                    send_date: new Date().toISOString(),
+                    mes: responseText,
+                    extra: {},
+                });
+            }
+        }
+        await saveChatConditional();
+        await printMessages();
+        toastr.success('시뮬 응답으로 새 챗이 생성되었습니다.', '시뮬 매니저');
+    } catch (err) {
+        console.error(DEBUG_PREFIX, 'Failed to create new chat:', err);
+        toastr.error('새 챗 생성에 실패했습니다.', '시뮬 매니저');
+    }
 }
 
 // ============================================
@@ -1645,6 +1731,7 @@ function renderResponseText(text) {
             transToggle.addEventListener('change', () => {
                 extension_settings[EXTENSION_NAME].translationEnabled = transToggle.checked;
                 if (transSettings) transSettings.style.display = transToggle.checked ? '' : 'none';
+                if (!transToggle.checked) showTranslated = false;
                 saveSettingsDebounced();
             });
         }

@@ -856,3 +856,56 @@
         min-height: 35vh;
     }
 }
+
+/* ---- New Chat Dialog ---- */
+.sim-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10001;
+}
+
+.sim-dialog-box {
+    background: var(--SmartThemeBlurTintColor, #1a1a2e);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 10px;
+    padding: 20px;
+    min-width: 280px;
+    max-width: 360px;
+    text-align: center;
+}
+
+.sim-dialog-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--SmartThemeBodyColor, #eee);
+    margin-bottom: 8px;
+}
+
+.sim-dialog-desc {
+    font-size: 12px;
+    color: var(--SmartThemeBodyColor, #999);
+    margin-bottom: 16px;
+}
+
+.sim-dialog-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.sim-dialog-buttons .sim-btn {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+.sim-btn-muted {
+    opacity: 0.6;
+}
