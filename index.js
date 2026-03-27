@@ -1362,6 +1362,10 @@ async function handleRevision(sim, responseIdx, feedback, isGlobal) {
 <rule>Maintain the same general length unless the feedback specifically requests otherwise.</rule>
 </revision_task>
 
+<original_request>
+${sim.promptText}
+</original_request>
+
 <original_message>
 ${originalResponse}
 </original_message>
@@ -1370,7 +1374,7 @@ ${originalResponse}
 ${feedback}
 </feedback>
 
-Rewrite the original message above, incorporating the editorial feedback. Begin your revised message now:`;
+Rewrite the original message above, incorporating the editorial feedback. The original_request is provided for context only — do not re-answer it from scratch. Begin your revised message now:`;
 
     const btn = isGlobal
         ? document.getElementById('sim-gv-revision-btn')
