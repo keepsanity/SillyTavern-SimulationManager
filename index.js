@@ -528,6 +528,7 @@ function renderDetailView() {
             ${responseCount > 0 && !isEditingResponse ? `
             <div class="sim-response-actions-row">
                 ${buildTranslateButtonHTML(sim, currentIdx)}
+                <button class="sim-btn-icon" id="sim-revision-btn" title="수정 요청"><i class="fa-solid fa-wand-magic-sparkles"></i> 통제광</button>
                 <button class="sim-btn-icon" id="sim-new-chat-btn" title="이 응답으로 새 챗 시작"><i class="fa-solid fa-comment-dots"></i> 새 챗</button>
                 <button class="sim-btn-icon" id="sim-edit-response-btn" title="응답 수정"><i class="fa-solid fa-pen"></i> 수정</button>
                 ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
@@ -590,6 +591,13 @@ function renderDetailView() {
         saveSimulations();
         renderDetailView();
         if (typeof toastr !== 'undefined') toastr.success('시뮬 내용이 수정되었습니다.', '시뮬 매니저');
+    });
+
+    // 통제광 (수정 요청)
+    document.getElementById('sim-revision-btn')?.addEventListener('click', () => {
+        const responseText = sim.responses[sim.currentIndex];
+        if (!responseText) return;
+        showRevisionDialog(sim, sim.currentIndex);
     });
 
     // 새 챗으로 시작
@@ -895,6 +903,7 @@ function renderGlobalDetailView() {
             ${responseCount > 0 && !isEditingGlobalResponse ? `
             <div class="sim-response-actions-row">
                 ${buildTranslateButtonHTML(sim, currentIdx)}
+                <button class="sim-btn-icon" id="sim-gv-revision-btn" title="수정 요청"><i class="fa-solid fa-wand-magic-sparkles"></i> 통제광</button>
                 <button class="sim-btn-icon" id="sim-gv-edit-response-btn" title="응답 수정"><i class="fa-solid fa-pen"></i> 수정</button>
                 ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-gv-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
             </div>
@@ -975,6 +984,13 @@ function renderGlobalDetailView() {
         saveSettingsDebounced();
         renderGlobalDetailView();
         if (typeof toastr !== 'undefined') toastr.success('시뮬 내용이 수정되었습니다.', '시뮬 매니저');
+    });
+
+    // 통제광 (글로벌)
+    document.getElementById('sim-gv-revision-btn')?.addEventListener('click', () => {
+        const responseText = sim.responses[sim.currentIndex];
+        if (!responseText) return;
+        showRevisionDialog(sim, sim.currentIndex, true);
     });
 
     // 응답 수정
@@ -1308,6 +1324,80 @@ function setupSimPrompt(resolvedPrompt) {
 
 function clearSimPrompt() {
     setExtensionPrompt(SIM_INJECT_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
+}
+
+function showRevisionDialog(sim, responseIdx, isGlobal = false) {
+    const overlay = document.createElement('div');
+    overlay.className = 'sim-dialog-overlay';
+    overlay.innerHTML = `
+        <div class="sim-dialog-box">
+            <div class="sim-dialog-title"><i class="fa-solid fa-wand-magic-sparkles"></i> 통제광</div>
+            <p style="font-size:12px; color:var(--SmartThemeBodyColor, #aaa); margin:0 0 10px;">어떻게 수정할지 피드백을 입력하세요.</p>
+            <textarea id="sim-revision-feedback" class="sim-revision-textarea" placeholder="어떻게 수정할까요?"></textarea>
+            <div class="sim-dialog-buttons">
+                <button class="sim-btn" id="sim-revision-cancel">취소</button>
+                <button class="sim-btn sim-btn-primary" id="sim-revision-send"><i class="fa-solid fa-paper-plane"></i> 요청</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#sim-revision-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('#sim-revision-send').addEventListener('click', async () => {
+        const feedback = document.getElementById('sim-revision-feedback')?.value?.trim();
+        if (!feedback) { toastr.warning('피드백을 입력해주세요.'); return; }
+        overlay.remove();
+        await handleRevision(sim, responseIdx, feedback, isGlobal);
+    });
+}
+
+async function handleRevision(sim, responseIdx, feedback, isGlobal) {
+    const originalResponse = sim.responses[responseIdx];
+    const revisionPrompt = `<revision_task priority="critical">
+<rule>You are performing an editorial revision. Your ONLY task is to rewrite the message below according to the feedback provided.</rule>
+<rule>Output ONLY the revised message text.</rule>
+<rule>Do NOT continue the story or add new events beyond the original ending point.</rule>
+<rule>Do NOT add meta-commentary, explanations, or notes.</rule>
+<rule>Maintain the same general length unless the feedback specifically requests otherwise.</rule>
+</revision_task>
+
+<original_message>
+${originalResponse}
+</original_message>
+
+<feedback>
+${feedback}
+</feedback>
+
+Rewrite the original message above, incorporating the editorial feedback. Begin your revised message now:`;
+
+    const btn = isGlobal
+        ? document.getElementById('sim-gv-revision-btn')
+        : document.getElementById('sim-revision-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 수정 중...'; }
+
+    try {
+        const rawResponse = await generateQuietPrompt({ quietPrompt: revisionPrompt, quietToLoud: true });
+        const { thinking, content } = separateThinkingContent(rawResponse);
+
+        if (!sim.reasonings) sim.reasonings = [];
+        sim.responses.push(content);
+        sim.reasonings.push(thinking);
+        sim.currentIndex = sim.responses.length - 1;
+        saveSimulations();
+
+        if (isGlobal) {
+            renderGlobalDetailView();
+        } else {
+            renderDetailView();
+        }
+        toastr.success('수정본이 새 응답으로 추가되었습니다.', '통제광');
+    } catch (err) {
+        console.error(DEBUG_PREFIX, 'Revision failed:', err);
+        toastr.error('수정 요청에 실패했습니다.', '통제광');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 통제광'; }
+    }
 }
 
 function showNewChatDialog(promptText, responseText) {
