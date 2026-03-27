@@ -1294,21 +1294,20 @@ async function handleRegenerateSimulation(sim) {
     }
 }
 
-const SIM_SYSTEM_INSTRUCTION = 'The user has requested a simulation/what-if scenario outside the main roleplay. Generate a response based on the following request. Stay in character and maintain the established setting, personality, and tone. This is a standalone simulation and should NOT affect the main conversation.';
+const SIM_SYSTEM_INSTRUCTION = `<simulation_directive priority="critical">
+<rule>This is a STANDALONE SIMULATION requested by the user.</rule>
+<rule>FOLLOW OOC REQUEST ONLY. Generate a response based ONLY on the user's simulation request below.</rule>
+<rule>Stay in character and maintain the established setting, personality, and tone.</rule>
+</simulation_directive>`;
 const SIM_INJECT_KEY = 'sim_manager_inject';
 
-const SIM_INJECT_KEY_USER = 'sim_manager_inject_user';
-
 function setupSimPrompt(resolvedPrompt) {
-    // depth 1, system role → 먼저 (시스템 지시)
-    setExtensionPrompt(SIM_INJECT_KEY, SIM_SYSTEM_INSTRUCTION, extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.SYSTEM);
-    // depth 1, user role → 나중에 (시뮬 프롬프트)
-    setExtensionPrompt(SIM_INJECT_KEY_USER, resolvedPrompt, extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.USER);
+    const combined = `${SIM_SYSTEM_INSTRUCTION}\n\n${resolvedPrompt}`;
+    setExtensionPrompt(SIM_INJECT_KEY, combined, extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
 }
 
 function clearSimPrompt() {
-    setExtensionPrompt(SIM_INJECT_KEY, '', extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.SYSTEM);
-    setExtensionPrompt(SIM_INJECT_KEY_USER, '', extension_prompt_types.IN_CHAT, 1, false, extension_prompt_roles.USER);
+    setExtensionPrompt(SIM_INJECT_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
 }
 
 function showNewChatDialog(promptText, responseText) {
