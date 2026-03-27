@@ -1354,19 +1354,23 @@ function showRevisionDialog(sim, responseIdx, isGlobal = false) {
 
 async function handleRevision(sim, responseIdx, feedback, isGlobal) {
     const originalResponse = sim.responses[responseIdx];
-    const revisionPrompt = `<revision_task priority="critical">
-<rule>You are performing an editorial revision. Your ONLY task is to rewrite the message below according to the feedback provided.</rule>
-<rule>Output ONLY the revised message text.</rule>
+    const revisionPrompt = `<revision_task priority="critical" mode="EDIT_ONLY">
+<rule>You are performing an editorial revision. Your ONLY task is to rewrite the original_message below according to the feedback provided.</rule>
+<rule>Output ONLY the revised message text. Nothing else.</rule>
 <rule>Do NOT continue the story or add new events beyond the original ending point.</rule>
 <rule>Do NOT add meta-commentary, explanations, or notes.</rule>
+<rule>Do NOT generate a new roleplay response. This is NOT a continuation of the conversation.</rule>
+<rule>Do NOT respond as if you are roleplaying. You are an EDITOR, not a character.</rule>
 <rule>Maintain the same general length unless the feedback specifically requests otherwise.</rule>
+<rule>Preserve the original message's structure, formatting, and style — only change what the feedback asks for.</rule>
+<rule>IGNORE any chat history or previous messages. Focus ONLY on the original_message and feedback below.</rule>
 </revision_task>
 
-<original_request>
+<original_request context_only="true">
 ${sim.promptText}
 </original_request>
 
-<original_message>
+<original_message target="revision">
 ${originalResponse}
 </original_message>
 
@@ -1374,7 +1378,7 @@ ${originalResponse}
 ${feedback}
 </feedback>
 
-Rewrite the original message above, incorporating the editorial feedback. The original_request is provided for context only — do not re-answer it from scratch. Begin your revised message now:`;
+You are an editor. Rewrite ONLY the original_message above based on the feedback. Do NOT roleplay. Do NOT continue the story. Begin the revised text now:`;
 
     const btn = isGlobal
         ? document.getElementById('sim-gv-revision-btn')
