@@ -464,11 +464,8 @@
     color: var(--SmartThemeBodyColor, #888);
 }
 
-/* ---- Response Text (MD/HTML rendering) ---- */
+/* ---- Response Text (inherits .mes_text theme styling) ---- */
 .sim-response-text {
-    font-size: 13px;
-    color: var(--SmartThemeBodyColor, #ddd);
-    line-height: 1.7;
     word-break: break-word;
 }
 
@@ -477,30 +474,9 @@
     font-style: italic;
 }
 
-.sim-response-text p {
-    margin: 0.4em 0;
-}
-
-.sim-response-text h1,
-.sim-response-text h2,
-.sim-response-text h3,
-.sim-response-text h4 {
-    margin: 0.6em 0 0.3em;
-    color: var(--SmartThemeBodyColor, #eee);
-}
-
-.sim-response-text h1 { font-size: 1.3em; }
-.sim-response-text h2 { font-size: 1.15em; }
-.sim-response-text h3 { font-size: 1.05em; }
-
-.sim-response-text ul,
-.sim-response-text ol {
-    margin: 0.3em 0;
-    padding-left: 1.5em;
-}
-
-.sim-response-text li {
-    margin: 0.2em 0;
+/* q 태그 기본 따옴표 제거 (원문에 이미 따옴표가 있으므로 이중 표시 방지) */
+.sim-response-text q {
+    quotes: none;
 }
 
 /* ---- Thinking Block ---- */
@@ -554,85 +530,8 @@
     word-break: break-word;
 }
 
-.sim-response-text blockquote {
-    border-left: 3px solid var(--SmartThemeQuoteColor, #7c83ff);
-    margin: 0.5em 0;
-    padding: 0.3em 0.8em;
-    background: rgba(124, 131, 255, 0.05);
-    border-radius: 0 4px 4px 0;
-}
-
-.sim-response-text code {
-    font-family: var(--monoFontFamily);
-    white-space: pre-wrap;
-    border: 1px solid var(--SmartThemeBorderColor);
-    border-radius: 5px;
-    background-color: var(--black70a);
-    padding: 0 3px;
-    line-height: var(--mainFontSize);
-    color: var(--white70a);
-}
-
-.sim-response-text pre {
-    margin: 0.5em 0;
-}
-
-.sim-response-text pre code {
-    display: block;
-    overflow-x: auto;
-    padding: 1em;
-    tab-size: 4;
-}
-
-.sim-response-text em,
-.sim-response-text i {
-    color: var(--SmartThemeEmColor);
-}
-
-.sim-response-text q em,
-.sim-response-text q i {
-    color: inherit;
-}
-
-.sim-response-text q {
-    quotes: none;
-    color: var(--SmartThemeQuoteColor);
-}
-
-.sim-response-text u {
-    color: var(--SmartThemeUnderlineColor);
-}
-
-.sim-response-text font[color] em,
-.sim-response-text font[color] i,
-.sim-response-text font[color] u,
-.sim-response-text font[color] q {
-    color: inherit;
-}
-
-.sim-response-text hr {
-    border: none;
-    border-top: 1px solid var(--SmartThemeBorderColor, #444);
-    margin: 0.8em 0;
-}
-
-.sim-response-text table {
-    border-collapse: collapse;
-    width: 100%;
-    margin: 0.5em 0;
-    font-size: 12px;
-}
-
-.sim-response-text th,
-.sim-response-text td {
-    border: 1px solid var(--SmartThemeBorderColor, #444);
-    padding: 6px 10px;
-    text-align: left;
-}
-
-.sim-response-text th {
-    background: rgba(255, 255, 255, 0.05);
-}
+/* blockquote, em, q, u, code, table, hr 등은
+   .mes_text 클래스를 통해 테마 스타일을 자동 상속합니다. */
 
 /* ---- Translation ---- */
 .sim-translate-btn i.fa-language {

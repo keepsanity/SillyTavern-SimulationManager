@@ -542,7 +542,7 @@ function renderDetailView() {
                 </div>
             ` : `
                 ${renderThinkingBlock(sim, currentIdx)}
-                <div class="sim-response-text ${responseCount === 0 ? 'loading' : ''}" id="sim-response-display">
+                <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}" id="sim-response-display">
                     ${responseCount === 0 ? '아직 응답이 없습니다...' : renderResponseText(getDisplayResponse(sim, currentIdx))}
                 </div>
             `}
@@ -916,7 +916,7 @@ function renderGlobalDetailView() {
                 </div>
             ` : `
                 ${renderThinkingBlock(sim, currentIdx)}
-                <div class="sim-response-text ${responseCount === 0 ? 'loading' : ''}">
+                <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}">
                     ${responseCount === 0 ? '응답 없음' : renderResponseText(getDisplayResponse(sim, currentIdx))}
                 </div>
             `}
