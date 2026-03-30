@@ -224,6 +224,35 @@
     border-color: var(--SmartThemeQuoteColor, #7c83ff);
 }
 
+.sim-prompt-textarea-lg {
+    min-height: 35vh;
+}
+
+.sim-create-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sim-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--SmartThemeBodyColor, #aaa);
+    cursor: pointer;
+}
+
+.sim-checkbox-label input[type="checkbox"] {
+    accent-color: var(--SmartThemeQuoteColor, #7c83ff);
+}
+
+.sim-create-hint {
+    font-size: 11px;
+    color: var(--SmartThemeEmColor, #999);
+    font-style: italic;
+}
+
 .sim-create-actions {
     display: flex;
     gap: 8px;

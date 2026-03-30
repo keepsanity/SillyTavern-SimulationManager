@@ -30,6 +30,7 @@ const defaultSettings = {
     translationTargetLang: '한국어',
     translationCustomPrompt: '',
     translationProfileId: '',
+    translationVertexAuthMode: 'express', // 'express' | 'full'
 };
 
 function ensureSettings() {
@@ -44,6 +45,7 @@ function ensureSettings() {
     if (!s.translationTargetLang) s.translationTargetLang = '한국어';
     if (typeof s.translationCustomPrompt !== 'string') s.translationCustomPrompt = '';
     if (typeof s.translationProfileId !== 'string') s.translationProfileId = '';
+    if (typeof s.translationVertexAuthMode !== 'string' || s.translationVertexAuthMode === '') s.translationVertexAuthMode = 'express';
 }
 
 function getSimulations() {
@@ -245,6 +247,7 @@ async function scanAllChatsForSimulations() {
 // ============================================
 let currentView = 'list'; // 'list' | 'create' | 'detail' | 'globalList' | 'globalSimList' | 'globalDetail'
 let currentSimId = null;
+let tempSim = null; // 저장 안 하기 모드의 임시 sim
 let isEditingPrompt = false;
 let isEditingResponse = false;
 
@@ -307,6 +310,11 @@ function buildSettingsHTML() {
                     <div id="sim-translation-settings" style="display:none; margin-bottom:8px;">
                         <label style="font-size:12px; color:#aaa;">Connection Profile</label>
                         <select id="sim-translation-profile" class="text_pole connection_profile" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;"></select>
+                        <label style="font-size:12px; color:#aaa;">Vertex AI Auth Mode (Vertex AI 프로필만 해당)</label>
+                        <select id="sim-vertex-auth-mode" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;">
+                            <option value="express">Express (API Key)</option>
+                            <option value="full">Full (Service Account JSON)</option>
+                        </select>
                         <label style="font-size:12px; color:#aaa;">번역 대상 언어</label>
                         <input type="text" id="sim-translation-lang" placeholder="한국어" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;" />
                         <label style="font-size:12px; color:#aaa;">커스텀 번역 프롬프트 (선택)</label>
@@ -424,8 +432,19 @@ function renderCreateView() {
             ${selectOptions}
         </select>
 
+        <label>시뮬레이션 제목</label>
+        <input type="text" class="sim-prompt-search" id="sim-title-input" placeholder="제목 (비우면 프롬프트 앞글자 사용)" />
+
         <label>시뮬레이션 내용</label>
-        <textarea class="sim-prompt-textarea" id="sim-prompt-input" placeholder="프롬프트 내용"></textarea>
+        <textarea class="sim-prompt-textarea sim-prompt-textarea-lg" id="sim-prompt-input" placeholder="프롬프트 내용"></textarea>
+
+        <div class="sim-create-options">
+            <label class="sim-checkbox-label">
+                <input type="checkbox" id="sim-no-save" />
+                <span>이 시뮬레이션 저장 안 하기</span>
+            </label>
+            <span class="sim-create-hint" id="sim-overwrite-hint" style="display:none;">제목이나 내용을 수정하면 새 프롬프트로 저장됩니다.</span>
+        </div>
     </div>`;
 
     container.innerHTML = html;
@@ -458,10 +477,16 @@ function renderCreateView() {
 
     document.getElementById('sim-load-prompt')?.addEventListener('change', (e) => {
         const promptId = e.target.value;
-        if (!promptId) return;
+        const hint = document.getElementById('sim-overwrite-hint');
+        if (!promptId) {
+            if (hint) hint.style.display = 'none';
+            return;
+        }
         const found = savedPrompts.find(p => p.id === promptId);
         if (found) {
             document.getElementById('sim-prompt-input').value = found.content;
+            document.getElementById('sim-title-input').value = found.name;
+            if (hint) hint.style.display = '';
         }
     });
 
@@ -473,7 +498,7 @@ function renderDetailView() {
     if (!container) return;
 
     const sims = getSimulations();
-    const sim = sims.find(s => s.id === currentSimId);
+    const sim = (tempSim && tempSim.id === currentSimId) ? tempSim : sims.find(s => s.id === currentSimId);
     if (!sim) {
         goToList();
         return;
@@ -1116,11 +1141,15 @@ async function translateResponse(sim, responseIndex, renderFn) {
             { role: 'user', content: prompt },
         ];
 
+        // Vertex AI auth mode: 확장 설정 → 메인 설정 → 기본값 순서로 참조
+        const savedAuthMode = s.translationVertexAuthMode;
+        const vertexAuthMode = savedAuthMode || 'express';
         const response = await context.ConnectionManagerRequestService.sendRequest(
             profileId,
             messages,
             8192,
             { stream: false, extractData: true, includePreset: false, includeInstruct: false },
+            { vertexai_auth_mode: vertexAuthMode },
         );
 
         let translated = '';
@@ -1199,43 +1228,70 @@ async function handleSendSimulation() {
         return;
     }
 
+    const titleInput = document.getElementById('sim-title-input');
+    const customTitle = titleInput ? titleInput.value.trim() : '';
+    const noSave = document.getElementById('sim-no-save')?.checked || false;
+    const loadedPromptId = document.getElementById('sim-load-prompt')?.value || '';
+
     const resolvedPrompt = substituteParams(rawPrompt);
 
-    // 프롬프트 이름 자동 매칭
+    // 프롬프트 이름 결정
     ensureSettings();
     const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
     const matchedPrompt = savedPrompts.find(p => p.content === rawPrompt);
-    const promptName = matchedPrompt ? matchedPrompt.name : '';
+    const promptName = customTitle || (matchedPrompt ? matchedPrompt.name : '');
 
-    const sim = {
-        id: `sim_${uuidv4()}`,
-        promptText: rawPrompt,
-        promptName: promptName,
-        responses: [],
-        currentIndex: 0,
-        createdAt: Date.now(),
-    };
 
-    const sims = getSimulations();
-    sims.push(sim);
-    saveSimulations();
+    if (!noSave) {
+        const sim = {
+            id: `sim_${uuidv4()}`,
+            promptText: rawPrompt,
+            promptName: promptName,
+            responses: [],
+            currentIndex: 0,
+            createdAt: Date.now(),
+        };
 
-    // 보낸 프롬프트 자동 저장
-    const alreadySaved = savedPrompts.some(p => p.content === rawPrompt);
-    if (!alreadySaved) {
-        savedPrompts.push({
-            id: `prompt_${uuidv4()}`,
-            name: rawPrompt.length > 20 ? rawPrompt.substring(0, 20) + '...' : rawPrompt,
-            content: rawPrompt,
-        });
-        saveSettingsDebounced();
-        renderSettingsSavedPrompts();
+        const sims = getSimulations();
+        sims.push(sim);
+        saveSimulations();
+
+        // 보낸 프롬프트 자동 저장
+        {
+            const loadedPrompt = loadedPromptId ? savedPrompts.find(p => p.id === loadedPromptId) : null;
+            const titleChanged = customTitle && loadedPrompt && customTitle !== loadedPrompt.name;
+            const contentChanged = !savedPrompts.some(p => p.content === rawPrompt);
+
+            if (titleChanged || contentChanged) {
+                savedPrompts.push({
+                    id: `prompt_${uuidv4()}`,
+                    name: customTitle || (rawPrompt.length > 20 ? rawPrompt.substring(0, 20) + '...' : rawPrompt),
+                    content: rawPrompt,
+                });
+                saveSettingsDebounced();
+                renderSettingsSavedPrompts();
+            }
+        }
+
+        currentSimId = sim.id;
+        currentView = 'detail';
+        isEditingPrompt = false;
+        renderDetailView();
+    } else {
+        // 저장 안 하기 모드: 임시 sim 객체 (메모리에만)
+        currentSimId = `temp_${uuidv4()}`;
+        tempSim = {
+            id: currentSimId,
+            promptText: rawPrompt,
+            promptName: promptName,
+            responses: [],
+            currentIndex: 0,
+            createdAt: Date.now(),
+        };
+        currentView = 'detail';
+        isEditingPrompt = false;
+        renderDetailView();
     }
-
-    currentSimId = sim.id;
-    currentView = 'detail';
-    isEditingPrompt = false;
-    renderDetailView();
 
     try {
         console.log(DEBUG_PREFIX, 'Generating simulation response...');
@@ -1253,17 +1309,21 @@ async function handleSendSimulation() {
         const { thinking, content } = separateThinkingContent(rawResponse);
         console.log(DEBUG_PREFIX, 'Thinking length:', thinking?.length, 'Content length:', content?.length);
 
-        if (!sim.reasonings) sim.reasonings = [];
-        sim.responses.push(content);
-        sim.reasonings.push(thinking);
-        sim.currentIndex = 0;
-        saveSimulations();
+        // noSave 모드에서는 tempSim 사용
+        const targetSim = (tempSim && tempSim.id === currentSimId) ? tempSim : sims.find(s => s.id === currentSimId) || sim;
+        if (!targetSim.reasonings) targetSim.reasonings = [];
+        targetSim.responses.push(content);
+        targetSim.reasonings.push(thinking);
+        targetSim.currentIndex = 0;
+        if (!tempSim || tempSim.id !== currentSimId) {
+            saveSimulations();
+        }
 
-        if (currentView === 'detail' && currentSimId === sim.id) {
+        if (currentView === 'detail' && currentSimId === targetSim.id) {
             renderDetailView();
         }
 
-        showSimNotification(sim);
+        showSimNotification(targetSim);
         console.log(DEBUG_PREFIX, 'Simulation response received.');
     } catch (err) {
         console.error(DEBUG_PREFIX, 'Generation failed:', err);
@@ -1651,6 +1711,7 @@ function bindSettingsEvents() {
 function goToList() {
     currentView = 'list';
     currentSimId = null;
+    tempSim = null;
     isEditingPrompt = false;
     isEditingResponse = false;
     renderListView();
@@ -1894,6 +1955,16 @@ function renderResponseText(text) {
             }
         } catch (e) {
             console.warn(DEBUG_PREFIX, 'Connection Manager not available:', e);
+        }
+
+        // Vertex AI auth mode 초기화
+        const vertexAuthSelect = document.getElementById('sim-vertex-auth-mode');
+        if (vertexAuthSelect) {
+            vertexAuthSelect.value = extension_settings[EXTENSION_NAME].translationVertexAuthMode || 'express';
+            vertexAuthSelect.addEventListener('change', () => {
+                extension_settings[EXTENSION_NAME].translationVertexAuthMode = vertexAuthSelect.value;
+                saveSettingsDebounced();
+            });
         }
 
         bindSettingsEvents();
