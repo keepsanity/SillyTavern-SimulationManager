@@ -438,12 +438,12 @@ function renderCreateView() {
         <label>시뮬레이션 내용</label>
         <textarea class="sim-prompt-textarea sim-prompt-textarea-lg" id="sim-prompt-input" placeholder="프롬프트 내용"></textarea>
 
-        <div class="sim-create-options">
-            <label class="sim-checkbox-label">
-                <input type="checkbox" id="sim-no-save" />
-                <span>이 시뮬레이션 저장 안 하기</span>
-            </label>
-            <span class="sim-create-hint" id="sim-overwrite-hint" style="display:none;">제목이나 내용을 수정하면 새 프롬프트로 저장됩니다.</span>
+        <div class="sim-create-options">`
+            // <label class="sim-checkbox-label">
+            //     <input type="checkbox" id="sim-no-save" />
+            //     <span>이 시뮬레이션 저장 안 하기</span>
+            // </label>
+            +`<span class="sim-create-hint" id="sim-overwrite-hint" style="display:none;">제목이나 내용을 수정하면 새 프롬프트로 저장됩니다.</span>
         </div>
     </div>`;
 
@@ -583,6 +583,7 @@ function renderDetailView() {
         footer.innerHTML = `
         <div class="sim-detail-actions">
             <button class="sim-btn sim-btn-sm sim-btn-danger" id="sim-delete-sim"><i class="fa-solid fa-trash"></i> 시뮬 삭제</button>
+            ${responseCount > 0 ? `<button class="sim-btn sim-btn-sm" id="sim-continue"><i class="fa-solid fa-forward"></i> 이어쓰기</button>` : ''}
             <button class="sim-btn sim-btn-sm sim-btn-primary" id="sim-regenerate"><i class="fa-solid fa-rotate-right"></i> 답변 재생성</button>
         </div>`;
     }
@@ -677,6 +678,10 @@ function renderDetailView() {
             saveSimulations();
             renderDetailView();
         }
+    });
+
+    document.getElementById('sim-continue')?.addEventListener('click', () => {
+        handleContinueSimulation(sim, sim.currentIndex || 0, false);
     });
 
     document.getElementById('sim-regenerate')?.addEventListener('click', () => {
@@ -1369,6 +1374,71 @@ async function handleRegenerateSimulation(sim) {
         }
     }
 }
+
+async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
+    const currentResponse = sim.responses[responseIdx];
+    if (!currentResponse) {
+        toastr.warning('이어쓸 응답이 없습니다.', '시뮬 매니저');
+        return;
+    }
+
+    const continuePrompt = substituteParams(sim.promptText);
+
+    const btn = document.getElementById(isGlobal ? 'sim-gv-continue' : 'sim-continue');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 이어쓰기 중...';
+    }
+
+    try {
+        const combinedPrompt = `${SIM_CONTINUE_INSTRUCTION}\n\n<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${currentResponse}\n</response_so_far>`;
+        setExtensionPrompt(SIM_INJECT_KEY, combinedPrompt, extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
+        let rawResponse;
+        try {
+            rawResponse = await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
+        } finally {
+            clearSimPrompt();
+        }
+        const { thinking, content } = separateThinkingContent(rawResponse);
+
+        // 기존 응답에 이어붙이기
+        sim.responses[responseIdx] = currentResponse + content;
+        // reasoning도 이어붙이기
+        if (!sim.reasonings) sim.reasonings = [];
+        if (sim.reasonings[responseIdx]) {
+            sim.reasonings[responseIdx] += (thinking || '');
+        } else {
+            sim.reasonings[responseIdx] = thinking || '';
+        }
+        // 번역 캐시 무효화
+        if (sim.translations) delete sim.translations[String(responseIdx)];
+
+        if (isGlobal) {
+            saveSettingsDebounced();
+            if (currentView === 'globalDetail') renderGlobalDetailView();
+        } else {
+            saveSimulations();
+            if (currentView === 'detail' && currentSimId === sim.id) renderDetailView();
+        }
+
+        toastr.success('응답이 이어쓰기되었습니다.', '시뮬 매니저');
+    } catch (err) {
+        console.error(DEBUG_PREFIX, 'Continue failed:', err);
+        toastr.error('이어쓰기에 실패했습니다.', '시뮬 매니저');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-forward"></i> 이어쓰기';
+        }
+    }
+}
+
+const SIM_CONTINUE_INSTRUCTION = `<simulation_continue_directive priority="critical">
+<rule>This is a CONTINUATION of a previous simulation response.</rule>
+<rule>Continue writing EXACTLY from where the previous response ended. Do NOT repeat any part of the existing response.</rule>
+<rule>Maintain the same tone, style, and context as the existing response.</rule>
+<rule>Output ONLY the continuation text. Do NOT include any meta-commentary or acknowledgment.</rule>
+</simulation_continue_directive>`;
 
 const SIM_SYSTEM_INSTRUCTION = `<simulation_directive priority="critical">
 <rule>This is a STANDALONE SIMULATION requested by the user.</rule>
