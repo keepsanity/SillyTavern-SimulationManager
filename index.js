@@ -1152,7 +1152,7 @@ async function translateResponse(sim, responseIndex, renderFn) {
         const response = await context.ConnectionManagerRequestService.sendRequest(
             profileId,
             messages,
-            8192,
+            32000,
             { stream: false, extractData: true, includePreset: false, includeInstruct: false },
             { vertexai_auth_mode: vertexAuthMode },
         );
