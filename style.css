@@ -872,6 +872,35 @@
     margin-bottom: 12px;
 }
 
+/* ============================================
+   파트별 응답 (이어쓰기 파트 분리)
+   ============================================ */
+.sim-response-part {
+    position: relative;
+    margin: 0;
+    padding: 0;
+}
+
+/* 파트 사이 시각적 구분 없이 이어지게 */
+.sim-response-part + .sim-response-part .sim-response-part-text {
+    margin-top: 0;
+    padding-top: 0;
+}
+
+/* 파트별 액션 버튼 */
+.sim-part-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    padding: 2px 0;
+}
+
+.sim-btn-icon-sm {
+    font-size: 11px !important;
+    padding: 2px 5px !important;
+    min-width: unset !important;
+}
+
 .sim-btn-muted {
     opacity: 0.6;
 }

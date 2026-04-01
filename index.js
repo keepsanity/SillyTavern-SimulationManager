@@ -13,7 +13,6 @@
 import { extension_settings, saveMetadataDebounced, getContext } from '../../../extensions.js';
 import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, setExtensionPrompt, extension_prompt_types, extension_prompt_roles, doNewChat, chat, saveChatConditional, printMessages } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
-import { parseReasoningFromString } from '../../../reasoning.js';
 
 const EXTENSION_NAME = 'SillyTavern-SimulationManager';
 const DEBUG_PREFIX = '[SimManager]';
@@ -249,18 +248,19 @@ let currentView = 'list'; // 'list' | 'create' | 'detail' | 'globalList' | 'glob
 let currentSimId = null;
 let tempSim = null; // 저장 안 하기 모드의 임시 sim
 let isEditingPrompt = false;
-let isEditingResponse = false;
+let editingPartIdx = null; // null = 안 함, 0 = base, 1+ = continuation index+1
 
 // Global viewer state
 let globalViewChatKey = null;
 let globalViewSimId = null;
 let globalViewSimIndex = 0;
 let isEditingGlobalPrompt = false;
-let isEditingGlobalResponse = false;
+let editingGlobalPartIdx = null;
 
 // Translation state
 let showTranslated = false; // true면 번역 보기, false면 원문 보기
 let isTranslating = false;
+let translatingPartIdx = null; // 현재 번역 중인 파트 인덱스
 
 // ============================================
 // HTML Builders
@@ -506,7 +506,6 @@ function renderDetailView() {
 
     const responseCount = sim.responses ? sim.responses.length : 0;
     const currentIdx = sim.currentIndex || 0;
-    const currentResponse = responseCount > 0 ? sim.responses[currentIdx] : '';
 
     // 프롬프트 영역: 수정 모드 vs 보기 모드
     let promptBoxContent;
@@ -550,27 +549,15 @@ function renderDetailView() {
                 </div>
                 ` : ''}
             </div>
-            ${responseCount > 0 && !isEditingResponse ? `
+            ${responseCount > 0 ? `
             <div class="sim-response-actions-row">
-                ${buildTranslateButtonHTML(sim, currentIdx)}
-                <button class="sim-btn-icon" id="sim-revision-btn" title="수정 요청"><i class="fa-solid fa-wand-magic-sparkles"></i> 통제광</button>
                 <button class="sim-btn-icon" id="sim-new-chat-btn" title="이 응답으로 새 챗 시작"><i class="fa-solid fa-comment-dots"></i> 새 챗</button>
-                <button class="sim-btn-icon" id="sim-edit-response-btn" title="응답 수정"><i class="fa-solid fa-pen"></i> 수정</button>
                 ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
             </div>
             ` : ''}
-            ${isEditingResponse && responseCount > 0 ? `
-                <textarea class="sim-edit-response-textarea" id="sim-edit-response-input">${escapeHtml(currentResponse)}</textarea>
-                <div class="sim-edit-prompt-actions">
-                    <button class="sim-btn" id="sim-edit-response-cancel">취소</button>
-                    <button class="sim-btn sim-btn-primary" id="sim-edit-response-save">저장</button>
-                </div>
-            ` : `
-                ${renderThinkingBlock(sim, currentIdx)}
-                <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}" id="sim-response-display">
-                    ${responseCount === 0 ? '아직 응답이 없습니다...' : renderResponseText(getDisplayResponse(sim, currentIdx))}
-                </div>
-            `}
+            <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}" id="sim-response-display">
+                ${responseCount === 0 ? '아직 응답이 없습니다...' : renderResponseParts(sim, currentIdx, editingPartIdx, false)}
+            </div>
         </div>
     </div>`;
 
@@ -619,51 +606,81 @@ function renderDetailView() {
         if (typeof toastr !== 'undefined') toastr.success('시뮬 내용이 수정되었습니다.', '시뮬 매니저');
     });
 
-    // 통제광 (수정 요청)
-    document.getElementById('sim-revision-btn')?.addEventListener('click', () => {
-        const responseText = sim.responses[sim.currentIndex];
-        if (!responseText) return;
-        showRevisionDialog(sim, sim.currentIndex);
-    });
-
     // 새 챗으로 시작
     document.getElementById('sim-new-chat-btn')?.addEventListener('click', async () => {
-        const responseText = sim.responses[sim.currentIndex];
+        const responseText = getFullResponseText(sim, sim.currentIndex || 0);
         if (!responseText) return;
         showNewChatDialog(sim.promptText, responseText);
     });
 
-    // 응답 수정 관련 이벤트
-    document.getElementById('sim-edit-response-btn')?.addEventListener('click', () => {
-        isEditingResponse = true;
-        renderDetailView();
-    });
+    // 파트별 이벤트 위임 (수정/번역/삭제)
+    const responseDisplay = document.getElementById('sim-response-display');
+    if (responseDisplay) {
+        responseDisplay.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const action = btn.dataset.action;
+            const partIdx = parseInt(btn.dataset.part, 10);
+            const key = String(currentIdx);
 
-    document.getElementById('sim-edit-response-cancel')?.addEventListener('click', () => {
-        isEditingResponse = false;
-        renderDetailView();
-    });
-
-    document.getElementById('sim-edit-response-save')?.addEventListener('click', () => {
-        const textarea = document.getElementById('sim-edit-response-input');
-        if (!textarea) return;
-        const newText = textarea.value.trim();
-        if (!newText) {
-            alert('내용을 입력해주세요.');
-            return;
-        }
-        sim.responses[currentIdx] = newText;
-        isEditingResponse = false;
-        saveSimulations();
-        renderDetailView();
-        if (typeof toastr !== 'undefined') toastr.success('응답이 수정되었습니다.', '시뮬 매니저');
-    });
+            switch (action) {
+                case 'part-edit':
+                    editingPartIdx = partIdx;
+                    renderDetailView();
+                    break;
+                case 'part-edit-cancel':
+                    editingPartIdx = null;
+                    renderDetailView();
+                    break;
+                case 'part-edit-save': {
+                    const textarea = document.getElementById(`sim-part-${partIdx}-edit-input`);
+                    if (!textarea) return;
+                    const newText = textarea.value.trim();
+                    if (!newText) { alert('내용을 입력해주세요.'); return; }
+                    if (partIdx === 0) {
+                        sim.responses[currentIdx] = newText;
+                    } else {
+                        if (sim.continuations?.[key]) sim.continuations[key][partIdx - 1] = newText;
+                    }
+                    // 해당 파트 번역 캐시 무효화
+                    if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
+                    editingPartIdx = null;
+                    saveSimulations();
+                    renderDetailView();
+                    toastr.success('파트가 수정되었습니다.', '시뮬 매니저');
+                    break;
+                }
+                case 'part-revision':
+                    showPartRevisionDialog(sim, currentIdx, partIdx, false);
+                    break;
+                case 'part-translate':
+                    translatePart(sim, currentIdx, partIdx, renderDetailView);
+                    break;
+                case 'part-retranslate':
+                    if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
+                    showTranslated = false;
+                    translatePart(sim, currentIdx, partIdx, renderDetailView);
+                    break;
+                case 'part-delete': {
+                    if (partIdx === 0) return; // base는 삭제 불가
+                    if (!confirm('이 이어쓰기 파트를 삭제하시겠습니까?')) return;
+                    const contIdx = partIdx - 1;
+                    if (sim.continuations?.[key]) sim.continuations[key].splice(contIdx, 1);
+                    if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
+                    saveSimulations();
+                    renderDetailView();
+                    toastr.success('파트가 삭제되었습니다.', '시뮬 매니저');
+                    break;
+                }
+            }
+        });
+    }
 
     // 응답 네비게이션
     document.getElementById('sim-prev-response')?.addEventListener('click', () => {
         if (sim.currentIndex > 0) {
             sim.currentIndex--;
-            isEditingResponse = false;
+            editingPartIdx = null;
             showTranslated = false;
             saveSimulations();
             renderDetailView();
@@ -673,7 +690,7 @@ function renderDetailView() {
     document.getElementById('sim-next-response')?.addEventListener('click', () => {
         if (sim.currentIndex < sim.responses.length - 1) {
             sim.currentIndex++;
-            isEditingResponse = false;
+            editingPartIdx = null;
             showTranslated = false;
             saveSimulations();
             renderDetailView();
@@ -701,9 +718,11 @@ function renderDetailView() {
 
     document.getElementById('sim-delete-response')?.addEventListener('click', () => {
         if (confirm('현재 보고 있는 답변을 삭제하시겠습니까?')) {
+            const delKey = String(sim.currentIndex);
             sim.responses.splice(sim.currentIndex, 1);
-            // 번역도 삭제
-            if (sim.translations) delete sim.translations[String(sim.currentIndex)];
+            if (sim.translations) delete sim.translations[delKey];
+            if (sim.continuations) delete sim.continuations[delKey];
+            if (sim.partTranslations) delete sim.partTranslations[delKey];
             if (sim.currentIndex >= sim.responses.length) {
                 sim.currentIndex = Math.max(0, sim.responses.length - 1);
             }
@@ -712,15 +731,6 @@ function renderDetailView() {
         }
     });
 
-    // 번역 버튼
-    container.querySelector('.sim-translate-btn')?.addEventListener('click', () => {
-        translateResponse(sim, currentIdx, renderDetailView);
-    });
-    container.querySelector('.sim-retranslate-btn')?.addEventListener('click', () => {
-        if (sim.translations) delete sim.translations[String(currentIdx)];
-        showTranslated = false;
-        translateResponse(sim, currentIdx, renderDetailView);
-    });
 }
 
 // ============================================
@@ -882,7 +892,6 @@ function renderGlobalDetailView() {
 
     const responseCount = sim.responses ? sim.responses.length : 0;
     const currentIdx = globalViewSimIndex || 0;
-    const currentResponse = responseCount > 0 ? sim.responses[currentIdx] : '';
 
     // 프롬프트 영역
     let promptBoxContent;
@@ -930,26 +939,14 @@ function renderGlobalDetailView() {
                 </div>
                 ` : ''}
             </div>
-            ${responseCount > 0 && !isEditingGlobalResponse ? `
+            ${responseCount > 1 ? `
             <div class="sim-response-actions-row">
-                ${buildTranslateButtonHTML(sim, currentIdx)}
-                <button class="sim-btn-icon" id="sim-gv-revision-btn" title="수정 요청"><i class="fa-solid fa-wand-magic-sparkles"></i> 통제광</button>
-                <button class="sim-btn-icon" id="sim-gv-edit-response-btn" title="응답 수정"><i class="fa-solid fa-pen"></i> 수정</button>
-                ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-gv-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
+                <button class="sim-btn-icon sim-btn-icon-danger" id="sim-gv-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>
             </div>
             ` : ''}
-            ${isEditingGlobalResponse && responseCount > 0 ? `
-                <textarea class="sim-edit-response-textarea" id="sim-gv-edit-response-input">${escapeHtml(currentResponse)}</textarea>
-                <div class="sim-edit-prompt-actions">
-                    <button class="sim-btn" id="sim-gv-edit-response-cancel">취소</button>
-                    <button class="sim-btn sim-btn-primary" id="sim-gv-edit-response-save">저장</button>
-                </div>
-            ` : `
-                ${renderThinkingBlock(sim, currentIdx)}
-                <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}">
-                    ${responseCount === 0 ? '응답 없음' : renderResponseText(getDisplayResponse(sim, currentIdx))}
-                </div>
-            `}
+            <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}" id="sim-gv-response-display">
+                ${responseCount === 0 ? '응답 없음' : renderResponseParts(sim, currentIdx, editingGlobalPartIdx, true)}
+            </div>
         </div>
     </div>`;
 
@@ -969,14 +966,14 @@ function renderGlobalDetailView() {
     document.getElementById('sim-back-to-global-simlist')?.addEventListener('click', () => {
         currentView = 'globalSimList';
         isEditingGlobalPrompt = false;
-        isEditingGlobalResponse = false;
+        editingGlobalPartIdx = null;
         renderGlobalSimListView();
     });
 
     document.getElementById('sim-gv-prev')?.addEventListener('click', () => {
         if (globalViewSimIndex > 0) {
             globalViewSimIndex--;
-            isEditingGlobalResponse = false;
+            editingGlobalPartIdx = null;
             showTranslated = false;
             renderGlobalDetailView();
         }
@@ -985,7 +982,7 @@ function renderGlobalDetailView() {
     document.getElementById('sim-gv-next')?.addEventListener('click', () => {
         if (globalViewSimIndex < responseCount - 1) {
             globalViewSimIndex++;
-            isEditingGlobalResponse = false;
+            editingGlobalPartIdx = null;
             showTranslated = false;
             renderGlobalDetailView();
         }
@@ -1016,57 +1013,81 @@ function renderGlobalDetailView() {
         if (typeof toastr !== 'undefined') toastr.success('시뮬 내용이 수정되었습니다.', '시뮬 매니저');
     });
 
-    // 통제광 (글로벌)
-    document.getElementById('sim-gv-revision-btn')?.addEventListener('click', () => {
-        const responseText = sim.responses[sim.currentIndex];
-        if (!responseText) return;
-        showRevisionDialog(sim, sim.currentIndex, true);
-    });
+    // 파트별 이벤트 위임 (글로벌)
+    const gvResponseDisplay = document.getElementById('sim-gv-response-display');
+    if (gvResponseDisplay) {
+        gvResponseDisplay.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const action = btn.dataset.action;
+            const partIdx = parseInt(btn.dataset.part, 10);
+            const key = String(currentIdx);
 
-    // 응답 수정
-    document.getElementById('sim-gv-edit-response-btn')?.addEventListener('click', () => {
-        isEditingGlobalResponse = true;
-        renderGlobalDetailView();
-    });
-
-    document.getElementById('sim-gv-edit-response-cancel')?.addEventListener('click', () => {
-        isEditingGlobalResponse = false;
-        renderGlobalDetailView();
-    });
-
-    document.getElementById('sim-gv-edit-response-save')?.addEventListener('click', () => {
-        const textarea = document.getElementById('sim-gv-edit-response-input');
-        if (!textarea) return;
-        const newText = textarea.value.trim();
-        if (!newText) { alert('내용을 입력해주세요.'); return; }
-        sim.responses[currentIdx] = newText;
-        isEditingGlobalResponse = false;
-        saveSettingsDebounced();
-        renderGlobalDetailView();
-        if (typeof toastr !== 'undefined') toastr.success('응답이 수정되었습니다.', '시뮬 매니저');
-    });
+            switch (action) {
+                case 'part-edit':
+                    editingGlobalPartIdx = partIdx;
+                    renderGlobalDetailView();
+                    break;
+                case 'part-edit-cancel':
+                    editingGlobalPartIdx = null;
+                    renderGlobalDetailView();
+                    break;
+                case 'part-edit-save': {
+                    const textarea = document.getElementById(`sim-gv-part-${partIdx}-edit-input`);
+                    if (!textarea) return;
+                    const newText = textarea.value.trim();
+                    if (!newText) { alert('내용을 입력해주세요.'); return; }
+                    if (partIdx === 0) {
+                        sim.responses[currentIdx] = newText;
+                    } else {
+                        if (sim.continuations?.[key]) sim.continuations[key][partIdx - 1] = newText;
+                    }
+                    if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
+                    editingGlobalPartIdx = null;
+                    saveSettingsDebounced();
+                    renderGlobalDetailView();
+                    toastr.success('파트가 수정되었습니다.', '시뮬 매니저');
+                    break;
+                }
+                case 'part-revision':
+                    showPartRevisionDialog(sim, currentIdx, partIdx, true);
+                    break;
+                case 'part-translate':
+                    translatePart(sim, currentIdx, partIdx, renderGlobalDetailView);
+                    break;
+                case 'part-retranslate':
+                    if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
+                    showTranslated = false;
+                    translatePart(sim, currentIdx, partIdx, renderGlobalDetailView);
+                    break;
+                case 'part-delete': {
+                    if (partIdx === 0) return;
+                    if (!confirm('이 이어쓰기 파트를 삭제하시겠습니까?')) return;
+                    const contIdx = partIdx - 1;
+                    if (sim.continuations?.[key]) sim.continuations[key].splice(contIdx, 1);
+                    if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
+                    saveSettingsDebounced();
+                    renderGlobalDetailView();
+                    toastr.success('파트가 삭제되었습니다.', '시뮬 매니저');
+                    break;
+                }
+            }
+        });
+    }
 
     // 답변 삭제
     document.getElementById('sim-gv-delete-response')?.addEventListener('click', () => {
         if (confirm('현재 보고 있는 답변을 삭제하시겠습니까?')) {
             sim.responses.splice(currentIdx, 1);
             if (sim.translations) delete sim.translations[String(currentIdx)];
+            if (sim.continuations) delete sim.continuations[String(currentIdx)];
+            if (sim.partTranslations) delete sim.partTranslations[String(currentIdx)];
             if (globalViewSimIndex >= sim.responses.length) {
                 globalViewSimIndex = Math.max(0, sim.responses.length - 1);
             }
             saveSettingsDebounced();
             renderGlobalDetailView();
         }
-    });
-
-    // 번역 버튼
-    container.querySelector('.sim-translate-btn')?.addEventListener('click', () => {
-        translateResponse(sim, currentIdx, renderGlobalDetailView);
-    });
-    container.querySelector('.sim-retranslate-btn')?.addEventListener('click', () => {
-        if (sim.translations) delete sim.translations[String(currentIdx)];
-        showTranslated = false;
-        translateResponse(sim, currentIdx, renderGlobalDetailView);
     });
 
     // 시뮬 삭제
@@ -1105,48 +1126,55 @@ function buildTranslationPrompt(text) {
     return `[System: Translate the following text into ${targetLang}. Output ONLY the translated text, without any additional commentary, explanation, or notes. Preserve the original formatting, line breaks, and markdown syntax exactly.]\n\n${text}`;
 }
 
-async function translateResponse(sim, responseIndex, renderFn) {
+/**
+ * 파트별 번역. sim.partTranslations[responseIdx][partIdx]에 저장.
+ */
+async function translatePart(sim, responseIdx, partIdx, renderFn) {
     if (isTranslating) return;
 
-    if (!sim.translations) sim.translations = {};
-    const key = String(responseIndex);
+    if (!sim.partTranslations) sim.partTranslations = {};
+    const rKey = String(responseIdx);
+    if (!sim.partTranslations[rKey]) sim.partTranslations[rKey] = {};
+    const pKey = String(partIdx);
 
-    // 이미 번역이 있으면 토글만
-    if (sim.translations[key]) {
+    // 이미 번역 있으면 토글
+    if (sim.partTranslations[rKey][pKey]) {
         showTranslated = !showTranslated;
         renderFn();
         return;
     }
 
-    const responseText = sim.responses[responseIndex];
-    if (!responseText) return;
+    // 파트 텍스트 가져오기
+    const conts = sim.continuations?.[rKey] || [];
+    const partText = partIdx === 0 ? sim.responses[responseIdx] : conts[partIdx - 1];
+    if (!partText) return;
 
     ensureSettings();
     const s = extension_settings[EXTENSION_NAME];
     const profileId = s.translationProfileId;
 
     if (!profileId) {
-        if (typeof toastr !== 'undefined') toastr.warning('번역 프로필을 설정해주세요.', '시뮬 매니저');
+        toastr.warning('번역 프로필을 설정해주세요.', '시뮬 매니저');
         return;
     }
 
     const context = getContext();
     if (!context.ConnectionManagerRequestService) {
-        if (typeof toastr !== 'undefined') toastr.error('Connection Manager가 필요합니다.', '시뮬 매니저');
+        toastr.error('Connection Manager가 필요합니다.', '시뮬 매니저');
         return;
     }
 
     isTranslating = true;
-    renderFn(); // 로딩 UI 반영
+    translatingPartIdx = partIdx;
+    renderFn();
 
     try {
-        const prompt = buildTranslationPrompt(responseText);
+        const prompt = buildTranslationPrompt(partText);
         const messages = [
             { role: 'system', content: 'You are a professional translator. Output ONLY the translated text without any commentary.' },
             { role: 'user', content: prompt },
         ];
 
-        // Vertex AI auth mode: 확장 설정 → 메인 설정 → 기본값 순서로 참조
         const savedAuthMode = s.translationVertexAuthMode;
         const vertexAuthMode = savedAuthMode || 'express';
         const response = await context.ConnectionManagerRequestService.sendRequest(
@@ -1168,56 +1196,24 @@ async function translateResponse(sim, responseIndex, renderFn) {
 
         if (!translated) throw new Error('번역 결과가 비어있습니다.');
 
-        if (!sim.translations) sim.translations = {};
-        sim.translations[key] = translated;
+        sim.partTranslations[rKey][pKey] = translated;
         showTranslated = true;
 
-        // 저장
         if (currentView === 'detail') {
             saveSimulations();
         } else {
             saveSettingsDebounced();
         }
 
-        if (typeof toastr !== 'undefined') toastr.success('번역 완료!', '시뮬 매니저');
+        toastr.success('파트 번역 완료!', '시뮬 매니저');
     } catch (err) {
-        console.error(DEBUG_PREFIX, 'Translation failed:', err);
-        if (typeof toastr !== 'undefined') toastr.error(`번역 실패: ${err.message}`, '시뮬 매니저');
+        console.error(DEBUG_PREFIX, 'Part translation failed:', err);
+        toastr.error(`번역 실패: ${err.message}`, '시뮬 매니저');
     } finally {
         isTranslating = false;
+        translatingPartIdx = null;
         renderFn();
     }
-}
-
-function buildTranslateButtonHTML(sim, responseIndex) {
-    ensureSettings();
-    if (!extension_settings[EXTENSION_NAME].translationEnabled) return '';
-
-    if (!sim.translations) sim.translations = {};
-    const hasTranslation = !!sim.translations[String(responseIndex)];
-
-    if (isTranslating) {
-        return `<button class="sim-btn-icon sim-translate-btn" disabled><i class="fa-solid fa-spinner fa-spin"></i> 번역 중...</button>`;
-    }
-
-    if (hasTranslation) {
-        return `
-            <button class="sim-btn-icon sim-translate-btn" title="번역">
-                <i class="fa-solid fa-language"></i> ${showTranslated ? '원문 보기' : '번역 보기'}
-            </button>
-            <button class="sim-btn-icon sim-retranslate-btn" title="다시 번역">
-                <i class="fa-solid fa-rotate-right"></i> 재번역
-            </button>`;
-    }
-
-    return `<button class="sim-btn-icon sim-translate-btn" title="번역"><i class="fa-solid fa-language"></i> 번역</button>`;
-}
-
-function getDisplayResponse(sim, responseIndex) {
-    if (!sim.translations) return sim.responses[responseIndex] || '';
-    const translated = sim.translations[String(responseIndex)];
-    if (showTranslated && translated) return translated;
-    return sim.responses[responseIndex] || '';
 }
 
 // ============================================
@@ -1247,8 +1243,11 @@ async function handleSendSimulation() {
     const promptName = customTitle || (matchedPrompt ? matchedPrompt.name : '');
 
 
+    const sims = getSimulations();
+    let sim = null;
+
     if (!noSave) {
-        const sim = {
+        sim = {
             id: `sim_${uuidv4()}`,
             promptText: rawPrompt,
             promptName: promptName,
@@ -1257,7 +1256,6 @@ async function handleSendSimulation() {
             createdAt: Date.now(),
         };
 
-        const sims = getSimulations();
         sims.push(sim);
         saveSimulations();
 
@@ -1311,14 +1309,10 @@ async function handleSendSimulation() {
             clearSimPrompt();
         }
         console.log(DEBUG_PREFIX, 'Raw response length:', rawResponse?.length);
-        const { thinking, content } = separateThinkingContent(rawResponse);
-        console.log(DEBUG_PREFIX, 'Thinking length:', thinking?.length, 'Content length:', content?.length);
 
         // noSave 모드에서는 tempSim 사용
         const targetSim = (tempSim && tempSim.id === currentSimId) ? tempSim : sims.find(s => s.id === currentSimId) || sim;
-        if (!targetSim.reasonings) targetSim.reasonings = [];
-        targetSim.responses.push(content);
-        targetSim.reasonings.push(thinking);
+        targetSim.responses.push(rawResponse);
         targetSim.currentIndex = 0;
         if (!tempSim || tempSim.id !== currentSimId) {
             saveSimulations();
@@ -1353,10 +1347,7 @@ async function handleRegenerateSimulation(sim) {
         } finally {
             clearSimPrompt();
         }
-        const { thinking, content } = separateThinkingContent(rawResponse);
-        if (!sim.reasonings) sim.reasonings = [];
-        sim.responses.push(content);
-        sim.reasonings.push(thinking);
+        sim.responses.push(rawResponse);
         sim.currentIndex = sim.responses.length - 1;
         saveSimulations();
 
@@ -1391,7 +1382,8 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
     }
 
     try {
-        const combinedPrompt = `${SIM_CONTINUE_INSTRUCTION}\n\n<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${currentResponse}\n</response_so_far>`;
+        const fullResponse = getFullResponseText(sim, responseIdx);
+        const combinedPrompt = `${SIM_CONTINUE_INSTRUCTION}\n\n<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${fullResponse}\n</response_so_far>`;
         setExtensionPrompt(SIM_INJECT_KEY, combinedPrompt, extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
         let rawResponse;
         try {
@@ -1399,19 +1391,14 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
         } finally {
             clearSimPrompt();
         }
-        const { thinking, content } = separateThinkingContent(rawResponse);
+        // continuations 배열에 파트 분리 저장
+        if (!sim.continuations) sim.continuations = {};
+        const key = String(responseIdx);
+        if (!Array.isArray(sim.continuations[key])) sim.continuations[key] = [];
+        sim.continuations[key].push(rawResponse);
 
-        // 기존 응답에 이어붙이기
-        sim.responses[responseIdx] = currentResponse + content;
-        // reasoning도 이어붙이기
-        if (!sim.reasonings) sim.reasonings = [];
-        if (sim.reasonings[responseIdx]) {
-            sim.reasonings[responseIdx] += (thinking || '');
-        } else {
-            sim.reasonings[responseIdx] = thinking || '';
-        }
         // 번역 캐시 무효화
-        if (sim.translations) delete sim.translations[String(responseIdx)];
+        if (sim.translations) delete sim.translations[key];
 
         if (isGlobal) {
             saveSettingsDebounced();
@@ -1456,35 +1443,44 @@ function clearSimPrompt() {
     setExtensionPrompt(SIM_INJECT_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
 }
 
-function showRevisionDialog(sim, responseIdx, isGlobal = false) {
+
+
+function showPartRevisionDialog(sim, responseIdx, partIdx, isGlobal = false) {
+    const key = String(responseIdx);
+    const conts = sim.continuations?.[key] || [];
+    const partText = partIdx === 0 ? sim.responses[responseIdx] : conts[partIdx - 1];
+    if (!partText) return;
+
     const overlay = document.createElement('div');
     overlay.className = 'sim-dialog-overlay';
     overlay.innerHTML = `
         <div class="sim-dialog-box">
-            <div class="sim-dialog-title"><i class="fa-solid fa-wand-magic-sparkles"></i> 통제광</div>
-            <p style="font-size:12px; color:var(--SmartThemeBodyColor, #aaa); margin:0 0 10px;">어떻게 수정할지 피드백을 입력하세요.</p>
-            <textarea id="sim-revision-feedback" class="sim-revision-textarea" placeholder="어떻게 수정할까요?"></textarea>
+            <div class="sim-dialog-title"><i class="fa-solid fa-wand-magic-sparkles"></i> 통제광 (파트 ${partIdx + 1})</div>
+            <p style="font-size:12px; color:var(--SmartThemeBodyColor, #aaa); margin:0 0 10px;">이 파트를 어떻게 수정할지 피드백을 입력하세요.</p>
+            <textarea id="sim-part-revision-feedback" class="sim-revision-textarea" placeholder="어떻게 수정할까요?"></textarea>
             <div class="sim-dialog-buttons">
-                <button class="sim-btn" id="sim-revision-cancel">취소</button>
-                <button class="sim-btn sim-btn-primary" id="sim-revision-send"><i class="fa-solid fa-paper-plane"></i> 요청</button>
+                <button class="sim-btn" id="sim-part-revision-cancel">취소</button>
+                <button class="sim-btn sim-btn-primary" id="sim-part-revision-send"><i class="fa-solid fa-paper-plane"></i> 요청</button>
             </div>
         </div>`;
     document.body.appendChild(overlay);
 
-    overlay.querySelector('#sim-revision-cancel').addEventListener('click', () => overlay.remove());
+    overlay.querySelector('#sim-part-revision-cancel').addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
-    overlay.querySelector('#sim-revision-send').addEventListener('click', async () => {
-        const feedback = document.getElementById('sim-revision-feedback')?.value?.trim();
+    overlay.querySelector('#sim-part-revision-send').addEventListener('click', async () => {
+        const feedback = document.getElementById('sim-part-revision-feedback')?.value?.trim();
         if (!feedback) { toastr.warning('피드백을 입력해주세요.'); return; }
         overlay.remove();
-        await handleRevision(sim, responseIdx, feedback, isGlobal);
-    });
-}
 
-async function handleRevision(sim, responseIdx, feedback, isGlobal) {
-    const originalResponse = sim.responses[responseIdx];
-    const revisionPrompt = `<revision_task priority="critical" mode="EDIT_ONLY">
+        // 이전 파트들을 컨텍스트로 구성
+        const allParts = [sim.responses[responseIdx], ...conts];
+        const precedingParts = allParts.slice(0, partIdx);
+        const precedingContext = precedingParts.length > 0
+            ? `\n<preceding_parts context_only="true">\n${precedingParts.join('\n---\n')}\n</preceding_parts>\n`
+            : '';
+
+        const revisionPrompt = `<revision_task priority="critical" mode="EDIT_ONLY">
 <rule>You are performing an editorial revision. Your ONLY task is to rewrite the original_message below according to the feedback provided.</rule>
 <rule>Output ONLY the revised message text. Nothing else.</rule>
 <rule>Do NOT continue the story or add new events beyond the original ending point.</rule>
@@ -1493,15 +1489,15 @@ async function handleRevision(sim, responseIdx, feedback, isGlobal) {
 <rule>Do NOT respond as if you are roleplaying. You are an EDITOR, not a character.</rule>
 <rule>Maintain the same general length unless the feedback specifically requests otherwise.</rule>
 <rule>Preserve the original message's structure, formatting, and style — only change what the feedback asks for.</rule>
-<rule>IGNORE any chat history or previous messages. Focus ONLY on the original_message and feedback below.</rule>
+<rule>The preceding_parts are provided for context ONLY. Do NOT include or modify them in your output.</rule>
 </revision_task>
 
 <original_request context_only="true">
 ${sim.promptText}
 </original_request>
-
+${precedingContext}
 <original_message target="revision">
-${originalResponse}
+${partText}
 </original_message>
 
 <feedback>
@@ -1510,32 +1506,30 @@ ${feedback}
 
 You are an editor. Rewrite ONLY the original_message above based on the feedback. Do NOT roleplay. Do NOT continue the story. Begin the revised text now:`;
 
-    const btn = isGlobal
-        ? document.getElementById('sim-gv-revision-btn')
-        : document.getElementById('sim-revision-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 수정 중...'; }
+        try {
+            const rawResponse = await generateQuietPrompt({ quietPrompt: revisionPrompt, quietToLoud: true });
+            // 해당 파트를 교체
+            if (partIdx === 0) {
+                sim.responses[responseIdx] = rawResponse;
+            } else {
+                if (sim.continuations?.[key]) sim.continuations[key][partIdx - 1] = rawResponse;
+            }
+            // 번역 캐시 무효화
+            if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
 
-    try {
-        const rawResponse = await generateQuietPrompt({ quietPrompt: revisionPrompt, quietToLoud: true });
-        const { thinking, content } = separateThinkingContent(rawResponse);
-
-        if (!sim.reasonings) sim.reasonings = [];
-        sim.responses.push(content);
-        sim.reasonings.push(thinking);
-        sim.currentIndex = sim.responses.length - 1;
-        saveSimulations();
-
-        if (isGlobal) {
-            renderGlobalDetailView();
-        } else {
-            renderDetailView();
+            if (isGlobal) {
+                saveSettingsDebounced();
+                renderGlobalDetailView();
+            } else {
+                saveSimulations();
+                renderDetailView();
+            }
+            toastr.success('파트가 수정되었습니다.', '통제광');
+        } catch (err) {
+            console.error(DEBUG_PREFIX, 'Part revision failed:', err);
+            toastr.error('수정 요청에 실패했습니다.', '통제광');
         }
-        toastr.success('수정본이 새 응답으로 추가되었습니다.', '통제광');
-    } catch (err) {
-        console.error(DEBUG_PREFIX, 'Revision failed:', err);
-        toastr.error('수정 요청에 실패했습니다.', '통제광');
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> 통제광'; }
-    }
+    });
 }
 
 function showNewChatDialog(promptText, responseText) {
@@ -1783,7 +1777,7 @@ function goToList() {
     currentSimId = null;
     tempSim = null;
     isEditingPrompt = false;
-    isEditingResponse = false;
+    editingPartIdx = null;
     renderListView();
 }
 
@@ -1838,79 +1832,79 @@ function escapeHtml(text) {
 }
 
 /**
- * thinking과 본문을 분리하여 반환
- * @returns {{ thinking: string, content: string }}
+ * 원본 응답 + continuation 파트들을 각각 별도 div로 렌더링.
+ * 각 파트마다 수정/번역/삭제 액션을 독립 제공.
+ * @param {object} sim
+ * @param {number} responseIdx
+ * @param {number|null} currentEditPart - 현재 수정 중인 파트 인덱스
+ * @param {boolean} isGlobal
  */
-function separateThinkingContent(text) {
-    if (!text) return { thinking: '', content: text || '' };
-    let thinking = '';
-    let content = text;
+function renderResponseParts(sim, responseIdx, currentEditPart = null, isGlobal = false) {
+    const base = sim.responses[responseIdx] || '';
+    const conts = sim.continuations?.[String(responseIdx)] || [];
+    const parts = [base, ...conts];
+    const prefix = isGlobal ? 'sim-gv' : 'sim';
 
-    // 1. SillyTavern 내장 파서 시도 (prefix/suffix 기반)
-    try {
-        if (typeof parseReasoningFromString === 'function') {
-            const parsed = parseReasoningFromString(content, { strict: false });
-            if (parsed && parsed.content && parsed.content.trim().length > 0) {
-                thinking = parsed.reasoning || '';
-                content = parsed.content;
-                return { thinking: thinking.trim(), content: content.trim() };
+    return parts.map((part, partIdx) => {
+        const isCont = partIdx > 0;
+        const partKey = `${prefix}-part-${partIdx}`;
+
+        if (currentEditPart === partIdx) {
+            // 수정 모드
+            return `<div class="sim-response-part" data-part-idx="${partIdx}">
+                <textarea class="sim-edit-response-textarea" id="${partKey}-edit-input">${escapeHtml(part)}</textarea>
+                <div class="sim-edit-prompt-actions">
+                    <button class="sim-btn" data-action="part-edit-cancel" data-part="${partIdx}">취소</button>
+                    <button class="sim-btn sim-btn-primary" data-action="part-edit-save" data-part="${partIdx}">저장</button>
+                </div>
+            </div>`;
+        }
+
+        // 파트별 번역 텍스트 확인
+        const partTranslations = sim.partTranslations?.[String(responseIdx)];
+        const hasTranslation = partTranslations?.[String(partIdx)];
+        const displayText = (showTranslated && hasTranslation) ? hasTranslation : part;
+
+        // 액션 버튼
+        ensureSettings();
+        const translationOn = extension_settings[EXTENSION_NAME].translationEnabled;
+        const isThisPartTranslating = isTranslating && translatingPartIdx === partIdx;
+        let translateBtn = '';
+        if (translationOn) {
+            if (isThisPartTranslating) {
+                translateBtn = `<button class="sim-btn-icon sim-btn-icon-sm" disabled><i class="fa-solid fa-spinner fa-spin"></i> 번역 중</button>`;
+            } else if (hasTranslation) {
+                translateBtn = `
+                    <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-translate" data-part="${partIdx}" title="${showTranslated ? '원문 보기' : '번역 보기'}"><i class="fa-solid fa-language"></i> ${showTranslated ? '원문' : '번역'}</button>
+                    <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-retranslate" data-part="${partIdx}" title="재번역"><i class="fa-solid fa-rotate-right"></i> 재번역</button>`;
+            } else {
+                translateBtn = `<button class="sim-btn-icon sim-btn-icon-sm" data-action="part-translate" data-part="${partIdx}" title="번역"><i class="fa-solid fa-language"></i></button>`;
             }
         }
-    } catch (e) { /* fallback */ }
+        const actions = `<div class="sim-part-actions">
+            <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-edit" data-part="${partIdx}" title="수정"><i class="fa-solid fa-pen"></i></button>
+            <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-revision" data-part="${partIdx}" title="통제광"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
+            ${translateBtn}
+            ${isCont ? `<button class="sim-btn-icon sim-btn-icon-sm sim-btn-icon-danger" data-action="part-delete" data-part="${partIdx}" title="삭제"><i class="fa-solid fa-xmark"></i></button>` : ''}
+        </div>`;
 
-    // 2. <think>...</think> 패턴
-    const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/i);
-    if (thinkMatch) {
-        thinking = thinkMatch[1];
-        content = content.replace(/<think>[\s\S]*?<\/think>/gi, '');
-        return { thinking: thinking.trim(), content: content.trim() };
-    }
-
-    // 3. <Thinking>...</Thinking> 패턴
-    const thinkingMatch = content.match(/<Thinking>([\s\S]*?)<\/Thinking>/i);
-    if (thinkingMatch) {
-        thinking = thinkingMatch[1];
-        content = content.replace(/<Thinking>[\s\S]*?<\/Thinking>/gi, '');
-        return { thinking: thinking.trim(), content: content.trim() };
-    }
-
-    // 4. "think\n..." Gemini 패턴 (빈 줄 2개로 본문 시작)
-    const geminiMatch = content.match(/^think\n([\s\S]*?)\n\n/i);
-    if (geminiMatch) {
-        thinking = geminiMatch[1];
-        content = content.replace(/^think\n[\s\S]*?\n\n/i, '');
-        return { thinking: thinking.trim(), content: content.trim() };
-    }
-
-    return { thinking: '', content: content.trim() };
+        return `<div class="sim-response-part" data-part-idx="${partIdx}">
+            ${actions}
+            <div class="sim-response-part-text">${renderResponseText(displayText)}</div>
+        </div>`;
+    }).join('');
 }
 
-function renderThinkingBlock(sim, index) {
-    // reasonings 배열에서 가져오기
-    let thinking = sim.reasonings?.[index] || '';
-
-    // reasonings 배열이 없는 기존 데이터는 응답에서 추출 시도
-    if (!thinking && sim.responses?.[index]) {
-        const separated = separateThinkingContent(sim.responses[index]);
-        thinking = separated.thinking;
-    }
-
-    if (!thinking) return '';
-
-    const thinkingHtml = escapeHtml(thinking).replace(/\n/g, '<br>');
-    return `<details class="sim-thinking-block">
-        <summary class="sim-thinking-summary">
-            <i class="fa-solid fa-brain"></i> Thinking
-            <i class="fa-solid fa-chevron-down sim-thinking-arrow"></i>
-        </summary>
-        <div class="sim-thinking-content">${thinkingHtml}</div>
-    </details>`;
+/**
+ * 원본 + continuation을 합친 전체 텍스트 반환.
+ */
+function getFullResponseText(sim, responseIdx) {
+    const base = sim.responses[responseIdx] || '';
+    const conts = sim.continuations?.[String(responseIdx)] || [];
+    return base + conts.join('');
 }
 
 function renderResponseText(text) {
-    // 기존 데이터에 thinking이 섞여 있을 수 있으므로 본문만 추출
-    const separated = separateThinkingContent(text);
-    text = separated.content;
     try {
         const context = getContext();
         if (typeof context.messageFormatting === 'function') {
