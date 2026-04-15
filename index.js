@@ -13,9 +13,147 @@
 import { extension_settings, saveMetadataDebounced, getContext } from '../../../extensions.js';
 import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, setExtensionPrompt, extension_prompt_types, extension_prompt_roles, doNewChat, chat, saveChatConditional, printMessages } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
+import { getPresetManager } from '../../../preset-manager.js';
+import { oai_settings, promptManager } from '../../../openai.js';
 
 const EXTENSION_NAME = 'SillyTavern-SimulationManager';
+const CUSTOM_PRESET_EXT = 'SillyTavern-CustomPreset';
 const DEBUG_PREFIX = '[SimManager]';
+
+// ============================================
+// Preset Helpers
+// ============================================
+function getOpenAiPresetManager() {
+    return getPresetManager('openai');
+}
+
+function getAvailablePresetNames() {
+    const pm = getOpenAiPresetManager();
+    if (!pm) return [];
+    try { return pm.getAllPresets(); } catch { return []; }
+}
+
+function getCurrentPresetName() {
+    return oai_settings?.preset_settings_openai || '';
+}
+
+function isCustomPresetTogglesEnabled() {
+    const s = extension_settings[CUSTOM_PRESET_EXT];
+    return !!(s && s.showTogglePresetFeature);
+}
+
+function getTogglePresetMap(presetName) {
+    const s = extension_settings[CUSTOM_PRESET_EXT];
+    if (!s || !s.togglePresets || !presetName) return null;
+    const map = s.togglePresets[presetName];
+    return (map && typeof map === 'object') ? map : null;
+}
+
+function getTogglePresetNames(presetName) {
+    const map = getTogglePresetMap(presetName);
+    if (!map) return [];
+    const names = Object.keys(map);
+    // 'default' 가 있으면 첫 번째로
+    return ['default', ...names.filter(n => n !== 'default').sort()].filter(n => map[n]);
+}
+
+function getCurrentActiveTogglePresetName(presetName) {
+    const s = extension_settings[CUSTOM_PRESET_EXT];
+    if (!s || !s.activeTogglePreset || !presetName) return 'default';
+    return s.activeTogglePreset[presetName] || 'default';
+}
+
+function captureToggleSnapshot() {
+    const ss = promptManager?.serviceSettings;
+    if (!ss?.prompt_order) return null;
+    const entry = ss.prompt_order.find(e => e.character_id === 100001);
+    if (!entry?.order) return null;
+    const snap = {};
+    for (const item of entry.order) snap[item.identifier] = !!item.enabled;
+    return snap;
+}
+
+function applyToggleSnapshot(snapshot) {
+    if (!snapshot) return false;
+    const ss = promptManager?.serviceSettings;
+    if (!ss?.prompt_order) return false;
+    const entry = ss.prompt_order.find(e => e.character_id === 100001);
+    if (!entry?.order) return false;
+    let changed = false;
+    for (const item of entry.order) {
+        if (Object.prototype.hasOwnProperty.call(snapshot, item.identifier)) {
+            const desired = !!snapshot[item.identifier];
+            if (item.enabled !== desired) {
+                item.enabled = desired;
+                changed = true;
+            }
+        }
+    }
+    if (changed) {
+        try { promptManager.saveServiceSettings(); } catch (e) { console.error(DEBUG_PREFIX, e); }
+        try { promptManager.render(); } catch (e) { console.error(DEBUG_PREFIX, e); }
+    }
+    return true;
+}
+
+async function switchPresetTo(presetName) {
+    const pm = getOpenAiPresetManager();
+    if (!pm) return false;
+    const value = pm.findPreset(presetName);
+    if (value === undefined || value === null) return false;
+    if (pm.getSelectedPresetName() === presetName) return true;
+    const done = new Promise(resolve => {
+        const onAfter = () => { eventSource.removeListener(event_types.OAI_PRESET_CHANGED_AFTER, onAfter); resolve(); };
+        eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, onAfter);
+        // 안전장치: 5초 내 응답 없으면 풀기
+        setTimeout(() => { eventSource.removeListener(event_types.OAI_PRESET_CHANGED_AFTER, onAfter); resolve(); }, 5000);
+    });
+    pm.selectPreset(value);
+    await done;
+    return true;
+}
+
+/**
+ * 시뮬레이션용 프리셋/토글 프리셋을 임시로 적용한 뒤 fn 실행, 끝나면 원복.
+ * presetName / togglePresetName 가 비어있으면 해당 항목은 변경하지 않음.
+ */
+async function withSimulationPreset(presetName, togglePresetName, fn) {
+    const pm = getOpenAiPresetManager();
+    const prevPresetName = pm ? pm.getSelectedPresetName() : '';
+    const prevToggleSnap = captureToggleSnapshot();
+    const needPresetSwitch = !!presetName && pm && presetName !== prevPresetName;
+    let presetSwitched = false;
+    try {
+        if (needPresetSwitch) {
+            const ok = await switchPresetTo(presetName);
+            if (!ok) {
+                console.warn(DEBUG_PREFIX, `Preset "${presetName}" not found, using current.`);
+                if (typeof toastr !== 'undefined') toastr.warning(`프리셋 "${presetName}" 을(를) 찾을 수 없어 현재 프리셋으로 진행합니다.`, '시뮬 매니저');
+            } else {
+                presetSwitched = true;
+            }
+        }
+        // 토글 프리셋은 프리셋 전환 이후에 적용 (전환 시 토글 상태가 덮어써질 수 있음)
+        if (togglePresetName) {
+            const effectivePreset = presetSwitched ? presetName : prevPresetName;
+            const map = getTogglePresetMap(effectivePreset);
+            if (map && map[togglePresetName]) {
+                applyToggleSnapshot(map[togglePresetName]);
+            } else {
+                console.warn(DEBUG_PREFIX, `Toggle preset "${togglePresetName}" not found for "${effectivePreset}".`);
+            }
+        }
+        return await fn();
+    } finally {
+        // 원복: 프리셋 먼저, 토글 그 다음 (프리셋 전환이 토글을 다시 덮으므로)
+        if (presetSwitched && prevPresetName) {
+            try { await switchPresetTo(prevPresetName); } catch (e) { console.error(DEBUG_PREFIX, 'Restore preset failed:', e); }
+        }
+        if (prevToggleSnap) {
+            try { applyToggleSnapshot(prevToggleSnap); } catch (e) { console.error(DEBUG_PREFIX, 'Restore toggles failed:', e); }
+        }
+    }
+}
 
 // ============================================
 // Default Settings
@@ -420,6 +558,22 @@ function renderCreateView() {
         selectOptions += `<option value="${p.id}">${escapeHtml(p.name)}</option>`;
     }
 
+    // 프리셋 셀렉트 옵션 (현재 프리셋이 기본 선택)
+    const currentPresetName = getCurrentPresetName();
+    const presetNames = getAvailablePresetNames();
+    let presetOptions = '';
+    for (const name of presetNames) {
+        const sel = name === currentPresetName ? ' selected' : '';
+        presetOptions += `<option value="${escapeHtml(name)}"${sel}>${escapeHtml(name)}</option>`;
+    }
+
+    // 토글 프리셋 영역 (CustomPreset 설치 + 활성화 시만)
+    const togglesEnabled = isCustomPresetTogglesEnabled();
+    const togglePresetBlock = togglesEnabled ? `
+        <label>토글 프리셋 (선택)</label>
+        <select class="sim-saved-prompts-select" id="sim-toggle-preset-select"></select>
+    ` : '';
+
     const html = `
     <div class="sim-create-view">
         <button class="sim-btn" id="sim-back-to-list" style="align-self:flex-start;">
@@ -437,6 +591,12 @@ function renderCreateView() {
 
         <label>시뮬레이션 내용</label>
         <textarea class="sim-prompt-textarea sim-prompt-textarea-lg" id="sim-prompt-input" placeholder="프롬프트 내용"></textarea>
+
+        <label>프리셋 (선택)</label>
+        <select class="sim-saved-prompts-select" id="sim-preset-select">
+            ${presetOptions}
+        </select>
+        ${togglePresetBlock}
 
         <div class="sim-create-options">`
             // <label class="sim-checkbox-label">
@@ -491,6 +651,31 @@ function renderCreateView() {
     });
 
     document.getElementById('sim-send-btn')?.addEventListener('click', handleSendSimulation);
+
+    // 프리셋 / 토글 프리셋 셀렉트 초기화 & 연동
+    const presetSelect = document.getElementById('sim-preset-select');
+    const togglePresetSelect = document.getElementById('sim-toggle-preset-select');
+
+    function refreshTogglePresetOptions() {
+        if (!togglePresetSelect) return;
+        const chosenPreset = presetSelect?.value || getCurrentPresetName();
+        const names = getTogglePresetNames(chosenPreset);
+        // 선택된 프리셋이 현재 프리셋과 같으면 현재 활성 토글을, 다르면 default 선택
+        const preselect = (chosenPreset === getCurrentPresetName())
+            ? getCurrentActiveTogglePresetName(chosenPreset)
+            : 'default';
+        togglePresetSelect.innerHTML = '';
+        for (const n of names) {
+            const opt = document.createElement('option');
+            opt.value = n;
+            opt.textContent = n === 'default' ? '기본' : n;
+            if (n === preselect) opt.selected = true;
+            togglePresetSelect.appendChild(opt);
+        }
+        // preselect 가 목록에 없으면 첫 항목이 selected 로 남음 (브라우저 기본)
+    }
+    refreshTogglePresetOptions();
+    presetSelect?.addEventListener('change', refreshTogglePresetOptions);
 }
 
 function renderDetailView() {
@@ -528,6 +713,30 @@ function renderDetailView() {
             </details>`;
     }
 
+    // 프리셋 정보 표시
+    const simPresetLabel = sim.presetName || getCurrentPresetName() || '(없음)';
+    const simTogglePresetRaw = sim.togglePresetName || 'default';
+    const simTogglePresetLabel = simTogglePresetRaw === 'default' ? '기본' : simTogglePresetRaw;
+    const togglesEnabledForDetail = isCustomPresetTogglesEnabled();
+    const presetBoxContent = `
+        <div class="sim-detail-prompt-header">
+            <div class="sim-detail-prompt-label">
+                프리셋: ${escapeHtml(simPresetLabel)}${togglesEnabledForDetail ? ` / 토글: ${escapeHtml(simTogglePresetLabel)}` : ''}
+            </div>
+            <button class="sim-btn-icon" id="sim-edit-preset-btn" title="프리셋 변경"><i class="fa-solid fa-pen"></i> 변경</button>
+        </div>
+        <div class="sim-detail-preset-edit" id="sim-detail-preset-edit" style="display:none; padding:8px 4px 4px;">
+            <label style="font-size:11px;">프리셋</label>
+            <select class="sim-saved-prompts-select" id="sim-detail-preset-select"></select>
+            ${togglesEnabledForDetail ? `
+            <label style="font-size:11px; margin-top:6px;">토글 프리셋</label>
+            <select class="sim-saved-prompts-select" id="sim-detail-toggle-preset-select"></select>
+            ` : ''}
+            <div style="display:flex; gap:6px; margin-top:8px; justify-content:flex-end;">
+                <button class="sim-btn sim-btn-sm sim-btn-primary" id="sim-detail-preset-save">저장</button>
+            </div>
+        </div>`;
+
     const html = `
     <div class="sim-detail-view">
         <button class="sim-btn" id="sim-back-to-list" style="align-self:flex-start;">
@@ -536,6 +745,10 @@ function renderDetailView() {
 
         <div class="sim-detail-prompt-box">
             ${promptBoxContent}
+        </div>
+
+        <div class="sim-detail-prompt-box">
+            ${presetBoxContent}
         </div>
 
         <div class="sim-response-area">
@@ -604,6 +817,70 @@ function renderDetailView() {
         saveSimulations();
         renderDetailView();
         if (typeof toastr !== 'undefined') toastr.success('시뮬 내용이 수정되었습니다.', '시뮬 매니저');
+    });
+
+    // 프리셋 편집 패널
+    const presetEditBtn = document.getElementById('sim-edit-preset-btn');
+    const presetEditPanel = document.getElementById('sim-detail-preset-edit');
+    const detailPresetSelect = document.getElementById('sim-detail-preset-select');
+    const detailTogglePresetSelect = document.getElementById('sim-detail-toggle-preset-select');
+
+    function fillDetailPresetOptions() {
+        if (!detailPresetSelect) return;
+        const presetNames = getAvailablePresetNames();
+        const target = sim.presetName || getCurrentPresetName();
+        detailPresetSelect.innerHTML = '';
+        for (const n of presetNames) {
+            const opt = document.createElement('option');
+            opt.value = n;
+            opt.textContent = n;
+            if (n === target) opt.selected = true;
+            detailPresetSelect.appendChild(opt);
+        }
+    }
+    function fillDetailTogglePresetOptions() {
+        if (!detailTogglePresetSelect) return;
+        const chosen = detailPresetSelect?.value || getCurrentPresetName();
+        const names = getTogglePresetNames(chosen);
+        // 선택한 프리셋의 것이면 sim.togglePresetName 선호, 아니면 default
+        const target = (chosen === (sim.presetName || getCurrentPresetName()))
+            ? (sim.togglePresetName || 'default')
+            : 'default';
+        detailTogglePresetSelect.innerHTML = '';
+        for (const n of names) {
+            const opt = document.createElement('option');
+            opt.value = n;
+            opt.textContent = n === 'default' ? '기본' : n;
+            if (n === target) opt.selected = true;
+            detailTogglePresetSelect.appendChild(opt);
+        }
+    }
+
+    presetEditBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!presetEditPanel) return;
+        const isOpen = presetEditPanel.style.display !== 'none';
+        if (isOpen) {
+            presetEditPanel.style.display = 'none';
+            return;
+        }
+        fillDetailPresetOptions();
+        fillDetailTogglePresetOptions();
+        presetEditPanel.style.display = '';
+    });
+
+    detailPresetSelect?.addEventListener('change', fillDetailTogglePresetOptions);
+
+    document.getElementById('sim-detail-preset-save')?.addEventListener('click', () => {
+        sim.presetName = detailPresetSelect?.value || '';
+        sim.togglePresetName = detailTogglePresetSelect?.value || 'default';
+        // tempSim 이면 saveSimulations 가 의미 없음 — temp 는 그대로 메모리 갱신
+        if (!tempSim || tempSim.id !== sim.id) {
+            saveSimulations();
+        }
+        renderDetailView();
+        if (typeof toastr !== 'undefined') toastr.success('프리셋 설정이 저장되었습니다.', '시뮬 매니저');
     });
 
     // 새 챗으로 시작
@@ -1234,6 +1511,10 @@ async function handleSendSimulation() {
     const noSave = document.getElementById('sim-no-save')?.checked || false;
     const loadedPromptId = document.getElementById('sim-load-prompt')?.value || '';
 
+    // 프리셋 선택값 캡처
+    const chosenPresetName = document.getElementById('sim-preset-select')?.value || '';
+    const chosenTogglePresetName = document.getElementById('sim-toggle-preset-select')?.value || '';
+
     const resolvedPrompt = substituteParams(rawPrompt);
 
     // 프롬프트 이름 결정
@@ -1254,6 +1535,8 @@ async function handleSendSimulation() {
             responses: [],
             currentIndex: 0,
             createdAt: Date.now(),
+            presetName: chosenPresetName,
+            togglePresetName: chosenTogglePresetName,
         };
 
         sims.push(sim);
@@ -1290,6 +1573,8 @@ async function handleSendSimulation() {
             responses: [],
             currentIndex: 0,
             createdAt: Date.now(),
+            presetName: chosenPresetName,
+            togglePresetName: chosenTogglePresetName,
         };
         currentView = 'detail';
         isEditingPrompt = false;
@@ -1301,13 +1586,15 @@ async function handleSendSimulation() {
         const sendBtn = document.getElementById('sim-regenerate');
         if (sendBtn) sendBtn.disabled = true;
 
-        setupSimPrompt(resolvedPrompt);
         let rawResponse;
-        try {
-            rawResponse = await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
-        } finally {
-            clearSimPrompt();
-        }
+        rawResponse = await withSimulationPreset(chosenPresetName, chosenTogglePresetName, async () => {
+            setupSimPrompt(resolvedPrompt);
+            try {
+                return await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
+            } finally {
+                clearSimPrompt();
+            }
+        });
         console.log(DEBUG_PREFIX, 'Raw response length:', rawResponse?.length);
 
         // noSave 모드에서는 tempSim 사용
@@ -1339,23 +1626,30 @@ async function handleRegenerateSimulation(sim) {
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 생성 중...';
     }
 
+    const simId = sim.id;
     try {
-        setupSimPrompt(resolvedPrompt);
         let rawResponse;
-        try {
-            rawResponse = await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
-        } finally {
-            clearSimPrompt();
-        }
-        sim.responses.push(rawResponse);
-        sim.currentIndex = sim.responses.length - 1;
-        saveSimulations();
+        rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, async () => {
+            setupSimPrompt(resolvedPrompt);
+            try {
+                return await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
+            } finally {
+                clearSimPrompt();
+            }
+        });
+        // 생성 후에 live sim 을 다시 찾아서 push (preset 전환 중 chat_metadata 가 바뀌었을 수 있음)
+        const liveSims = getSimulations();
+        const targetSim = (tempSim && tempSim.id === simId) ? tempSim : liveSims.find(s => s.id === simId) || sim;
+        if (!Array.isArray(targetSim.responses)) targetSim.responses = [];
+        targetSim.responses.push(rawResponse);
+        targetSim.currentIndex = targetSim.responses.length - 1;
+        if (!tempSim || tempSim.id !== simId) saveSimulations();
 
-        if (currentView === 'detail' && currentSimId === sim.id) {
+        if (currentView === 'detail' && currentSimId === simId) {
             renderDetailView();
         }
 
-        showSimNotification(sim);
+        showSimNotification(targetSim);
     } catch (err) {
         console.error(DEBUG_PREFIX, 'Regeneration failed:', err);
         toastr.error('답변 재생성에 실패했습니다.', '시뮬 매니저');
@@ -1384,28 +1678,36 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
     try {
         const fullResponse = getFullResponseText(sim, responseIdx);
         const combinedPrompt = `${SIM_CONTINUE_INSTRUCTION}\n\n<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${fullResponse}\n</response_so_far>`;
-        setExtensionPrompt(SIM_INJECT_KEY, combinedPrompt, extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
         let rawResponse;
-        try {
-            rawResponse = await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
-        } finally {
-            clearSimPrompt();
+        rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, async () => {
+            setExtensionPrompt(SIM_INJECT_KEY, combinedPrompt, extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
+            try {
+                return await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
+            } finally {
+                clearSimPrompt();
+            }
+        });
+        // 이어쓰기: preset 전환 중 chat_metadata 가 바뀌었을 수 있으므로 live sim 재조회 (비글로벌만)
+        let target = sim;
+        if (!isGlobal) {
+            const liveSims = getSimulations();
+            target = (tempSim && tempSim.id === sim.id) ? tempSim : liveSims.find(s => s.id === sim.id) || sim;
         }
         // continuations 배열에 파트 분리 저장
-        if (!sim.continuations) sim.continuations = {};
+        if (!target.continuations) target.continuations = {};
         const key = String(responseIdx);
-        if (!Array.isArray(sim.continuations[key])) sim.continuations[key] = [];
-        sim.continuations[key].push(rawResponse);
+        if (!Array.isArray(target.continuations[key])) target.continuations[key] = [];
+        target.continuations[key].push(rawResponse);
 
         // 번역 캐시 무효화
-        if (sim.translations) delete sim.translations[key];
+        if (target.translations) delete target.translations[key];
 
         if (isGlobal) {
             saveSettingsDebounced();
             if (currentView === 'globalDetail') renderGlobalDetailView();
         } else {
-            saveSimulations();
-            if (currentView === 'detail' && currentSimId === sim.id) renderDetailView();
+            if (!tempSim || tempSim.id !== target.id) saveSimulations();
+            if (currentView === 'detail' && currentSimId === target.id) renderDetailView();
         }
 
         toastr.success('응답이 이어쓰기되었습니다.', '시뮬 매니저');
@@ -1507,21 +1809,29 @@ ${feedback}
 You are an editor. Rewrite ONLY the original_message above based on the feedback. Do NOT roleplay. Do NOT continue the story. Begin the revised text now:`;
 
         try {
-            const rawResponse = await generateQuietPrompt({ quietPrompt: revisionPrompt, quietToLoud: true });
+            const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
+                generateQuietPrompt({ quietPrompt: revisionPrompt, quietToLoud: true })
+            );
+            // preset 전환 중 chat_metadata 가 바뀌었을 수 있어 live sim 재조회 (비글로벌)
+            let target = sim;
+            if (!isGlobal) {
+                const liveSims = getSimulations();
+                target = (tempSim && tempSim.id === sim.id) ? tempSim : liveSims.find(s => s.id === sim.id) || sim;
+            }
             // 해당 파트를 교체
             if (partIdx === 0) {
-                sim.responses[responseIdx] = rawResponse;
+                target.responses[responseIdx] = rawResponse;
             } else {
-                if (sim.continuations?.[key]) sim.continuations[key][partIdx - 1] = rawResponse;
+                if (target.continuations?.[key]) target.continuations[key][partIdx - 1] = rawResponse;
             }
             // 번역 캐시 무효화
-            if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
+            if (target.partTranslations?.[key]) delete target.partTranslations[key][String(partIdx)];
 
             if (isGlobal) {
                 saveSettingsDebounced();
                 renderGlobalDetailView();
             } else {
-                saveSimulations();
+                if (!tempSim || tempSim.id !== target.id) saveSimulations();
                 renderDetailView();
             }
             toastr.success('파트가 수정되었습니다.', '통제광');
