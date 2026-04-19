@@ -30,6 +30,8 @@ const defaultSettings = {
     translationCustomPrompt: '',
     translationProfileId: '',
     translationVertexAuthMode: 'express', // 'express' | 'full'
+    // 기본 주입 위치 ('last_message' | 'depth_1' | 'depth_0' | 'bottom')
+    defaultInjectPosition: 'last_message',
 };
 
 function ensureSettings() {
@@ -45,6 +47,12 @@ function ensureSettings() {
     if (typeof s.translationCustomPrompt !== 'string') s.translationCustomPrompt = '';
     if (typeof s.translationProfileId !== 'string') s.translationProfileId = '';
     if (typeof s.translationVertexAuthMode !== 'string' || s.translationVertexAuthMode === '') s.translationVertexAuthMode = 'express';
+    if (typeof s.defaultInjectPosition !== 'string') s.defaultInjectPosition = 'last_message';
+}
+
+function getDefaultInjectPosition() {
+    ensureSettings();
+    return normalizeSimPosition(extension_settings[EXTENSION_NAME].defaultInjectPosition);
 }
 
 function getSimulations() {
@@ -302,6 +310,10 @@ function buildSettingsHTML() {
                         <i class="fa-solid fa-layer-group"></i> 시뮬레이션 모아보기
                     </button>
                     <hr />
+                    <h4 style="margin:8px 0 4px; font-size:14px;">기본 주입 위치</h4>
+                    <label style="font-size:12px; color:#aaa;">새 시뮬 생성 시 기본 선택값</label>
+                    <select id="sim-default-position" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;"></select>
+                    <hr />
                     <h4 style="margin:8px 0 4px; font-size:14px;">번역 설정</h4>
                     <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:8px;">
                         <input type="checkbox" id="sim-translation-toggle" />
@@ -441,7 +453,7 @@ function renderCreateView() {
         <label>주입 위치</label>
         <select class="sim-saved-prompts-select" id="sim-position-select">
             ${Object.entries(SIM_POSITION_LABELS).map(([v, l]) =>
-                `<option value="${v}">${escapeHtml(l)}</option>`
+                `<option value="${v}"${v === getDefaultInjectPosition() ? ' selected' : ''}>${escapeHtml(l)}</option>`
             ).join('')}
         </select>
 
@@ -2066,6 +2078,19 @@ function renderResponseText(text) {
             toggle.checked = extension_settings[EXTENSION_NAME].notificationsEnabled;
             toggle.addEventListener('change', () => {
                 extension_settings[EXTENSION_NAME].notificationsEnabled = toggle.checked;
+                saveSettingsDebounced();
+            });
+        }
+
+        // 기본 주입 위치
+        const defaultPosSelect = document.getElementById('sim-default-position');
+        if (defaultPosSelect) {
+            defaultPosSelect.innerHTML = Object.entries(SIM_POSITION_LABELS).map(([v, l]) =>
+                `<option value="${v}">${escapeHtml(l)}</option>`
+            ).join('');
+            defaultPosSelect.value = getDefaultInjectPosition();
+            defaultPosSelect.addEventListener('change', () => {
+                extension_settings[EXTENSION_NAME].defaultInjectPosition = normalizeSimPosition(defaultPosSelect.value);
                 saveSettingsDebounced();
             });
         }
