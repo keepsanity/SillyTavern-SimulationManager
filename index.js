@@ -598,6 +598,13 @@ function renderCreateView() {
         </select>
         ${togglePresetBlock}
 
+        <label>주입 위치</label>
+        <select class="sim-saved-prompts-select" id="sim-position-select">
+            ${Object.entries(SIM_POSITION_LABELS).map(([v, l]) =>
+                `<option value="${v}">${escapeHtml(l)}</option>`
+            ).join('')}
+        </select>
+
         <div class="sim-create-options">`
             // <label class="sim-checkbox-label">
             //     <input type="checkbox" id="sim-no-save" />
@@ -737,6 +744,12 @@ function renderDetailView() {
             </div>
         </div>`;
 
+    // 주입 위치 select
+    const simPosition = normalizeSimPosition(sim.injectPosition);
+    const positionSelectOptions = Object.entries(SIM_POSITION_LABELS).map(([v, l]) =>
+        `<option value="${v}"${v === simPosition ? ' selected' : ''}>${escapeHtml(l)}</option>`
+    ).join('');
+
     const html = `
     <div class="sim-detail-view">
         <button class="sim-btn" id="sim-back-to-list" style="align-self:flex-start;">
@@ -749,6 +762,13 @@ function renderDetailView() {
 
         <div class="sim-detail-prompt-box">
             ${presetBoxContent}
+        </div>
+
+        <div class="sim-detail-prompt-box" style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:12px; font-weight:600;">주입 위치:</span>
+            <select class="sim-saved-prompts-select" id="sim-detail-position-select" style="flex:1;">
+                ${positionSelectOptions}
+            </select>
         </div>
 
         <div class="sim-response-area">
@@ -790,6 +810,12 @@ function renderDetailView() {
 
     // 이벤트 바인딩
     document.getElementById('sim-back-to-list')?.addEventListener('click', goToList);
+
+    // 주입 위치 변경
+    document.getElementById('sim-detail-position-select')?.addEventListener('change', (e) => {
+        sim.injectPosition = normalizeSimPosition(e.target.value);
+        if (!tempSim || tempSim.id !== sim.id) saveSimulations();
+    });
 
     // 수정 관련 이벤트
     document.getElementById('sim-edit-prompt-btn')?.addEventListener('click', (e) => {
@@ -1510,6 +1536,7 @@ async function handleSendSimulation() {
     const customTitle = titleInput ? titleInput.value.trim() : '';
     const noSave = document.getElementById('sim-no-save')?.checked || false;
     const loadedPromptId = document.getElementById('sim-load-prompt')?.value || '';
+    const chosenPosition = normalizeSimPosition(document.getElementById('sim-position-select')?.value);
 
     // 프리셋 선택값 캡처
     const chosenPresetName = document.getElementById('sim-preset-select')?.value || '';
@@ -1537,6 +1564,7 @@ async function handleSendSimulation() {
             createdAt: Date.now(),
             presetName: chosenPresetName,
             togglePresetName: chosenTogglePresetName,
+            injectPosition: chosenPosition,
         };
 
         sims.push(sim);
@@ -1575,6 +1603,7 @@ async function handleSendSimulation() {
             createdAt: Date.now(),
             presetName: chosenPresetName,
             togglePresetName: chosenTogglePresetName,
+            injectPosition: chosenPosition,
         };
         currentView = 'detail';
         isEditingPrompt = false;
@@ -1586,15 +1615,11 @@ async function handleSendSimulation() {
         const sendBtn = document.getElementById('sim-regenerate');
         if (sendBtn) sendBtn.disabled = true;
 
-        let rawResponse;
-        rawResponse = await withSimulationPreset(chosenPresetName, chosenTogglePresetName, async () => {
-            setupSimPrompt(resolvedPrompt);
-            try {
-                return await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
-            } finally {
-                clearSimPrompt();
-            }
-        });
+        // 현재 처리 중인 sim 의 injectPosition 사용 + 프리셋/토글 프리셋 임시 적용
+        const activeSim = (tempSim && tempSim.id === currentSimId) ? tempSim : sims.find(s => s.id === currentSimId) || sim;
+        const rawResponse = await withSimulationPreset(chosenPresetName, chosenTogglePresetName, () =>
+            runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, activeSim?.injectPosition)
+        );
         console.log(DEBUG_PREFIX, 'Raw response length:', rawResponse?.length);
 
         // noSave 모드에서는 tempSim 사용
@@ -1628,15 +1653,9 @@ async function handleRegenerateSimulation(sim) {
 
     const simId = sim.id;
     try {
-        let rawResponse;
-        rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, async () => {
-            setupSimPrompt(resolvedPrompt);
-            try {
-                return await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
-            } finally {
-                clearSimPrompt();
-            }
-        });
+        const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
+            runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, sim.injectPosition)
+        );
         // 생성 후에 live sim 을 다시 찾아서 push (preset 전환 중 chat_metadata 가 바뀌었을 수 있음)
         const liveSims = getSimulations();
         const targetSim = (tempSim && tempSim.id === simId) ? tempSim : liveSims.find(s => s.id === simId) || sim;
@@ -1677,17 +1696,13 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
 
     try {
         const fullResponse = getFullResponseText(sim, responseIdx);
-        const combinedPrompt = `${SIM_CONTINUE_INSTRUCTION}\n\n<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${fullResponse}\n</response_so_far>`;
-        let rawResponse;
-        rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, async () => {
-            setExtensionPrompt(SIM_INJECT_KEY, combinedPrompt, extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
-            try {
-                return await generateQuietPrompt({ quietPrompt: '', quietToLoud: true });
-            } finally {
-                clearSimPrompt();
-            }
-        });
-        // 이어쓰기: preset 전환 중 chat_metadata 가 바뀌었을 수 있으므로 live sim 재조회 (비글로벌만)
+        // 이어쓰기: 지시문은 system, ghost/inject 본문은 "원래 요청 + 지금까지의 응답"
+        const continueDirective = SIM_CONTINUE_INSTRUCTION;
+        const continueBody = `<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${fullResponse}\n</response_so_far>`;
+        const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
+            runSimGeneration(continueDirective, continueBody, sim.injectPosition)
+        );
+        // preset 전환 중 chat_metadata 가 바뀌었을 수 있으므로 live sim 재조회 (비글로벌만)
         let target = sim;
         if (!isGlobal) {
             const liveSims = getSimulations();
@@ -1734,15 +1749,97 @@ const SIM_SYSTEM_INSTRUCTION = `<simulation_directive priority="critical">
 <rule>FOLLOW OOC REQUEST ONLY. Generate a response based ONLY on the user's simulation request below.</rule>
 <rule>Stay in character and maintain the established setting, personality, and tone.</rule>
 </simulation_directive>`;
-const SIM_INJECT_KEY = 'sim_manager_inject';
+// ============================================
+// Sim Inject Position
+// ============================================
+const SIM_POSITIONS = {
+    LAST_MESSAGE: 'last_message', // chat 의 마지막 user 메시지 자리 (ghost push) — 기본
+    DEPTH_1: 'depth_1',           // IN_CHAT depth 1 USER — 진짜 마지막 메시지 앞
+    DEPTH_0: 'depth_0',           // IN_CHAT depth 0 USER — 진짜 마지막 메시지 뒤 (history 안)
+    BOTTOM: 'bottom',             // quietPrompt — </history> 밖, 프롬프트 맨 끝
+};
+const SIM_POSITION_LABELS = {
+    [SIM_POSITIONS.LAST_MESSAGE]: '마지막 메시지 (기본)',
+    [SIM_POSITIONS.DEPTH_1]: '깊이 1',
+    [SIM_POSITIONS.DEPTH_0]: '깊이 0',
+    [SIM_POSITIONS.BOTTOM]: '맨 밑',
+};
+const SIM_DIRECTIVE_KEY = 'sim_manager_directive';
+const SIM_OOC_KEY = 'sim_manager_ooc';
 
-function setupSimPrompt(resolvedPrompt) {
-    const combined = `${SIM_SYSTEM_INSTRUCTION}\n\n${resolvedPrompt}`;
-    setExtensionPrompt(SIM_INJECT_KEY, combined, extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
+function normalizeSimPosition(v) {
+    return Object.values(SIM_POSITIONS).includes(v) ? v : SIM_POSITIONS.LAST_MESSAGE;
 }
 
-function clearSimPrompt() {
-    setExtensionPrompt(SIM_INJECT_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
+function setSimDirectiveSystem(directive) {
+    setExtensionPrompt(SIM_DIRECTIVE_KEY, directive, extension_prompt_types.IN_PROMPT, 0, false, extension_prompt_roles.SYSTEM);
+}
+function clearSimDirectiveSystem() {
+    setExtensionPrompt(SIM_DIRECTIVE_KEY, '', extension_prompt_types.IN_PROMPT, 0, false, extension_prompt_roles.SYSTEM);
+}
+
+function setSimOocInChat(oocContent, depth) {
+    setExtensionPrompt(SIM_OOC_KEY, oocContent, extension_prompt_types.IN_CHAT, depth, false, extension_prompt_roles.USER);
+}
+function clearSimOocInChat() {
+    setExtensionPrompt(SIM_OOC_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
+}
+
+function pushSimGhostMessage(content) {
+    const ctx = getContext();
+    const ghost = {
+        name: ctx?.name1 || 'User',
+        is_user: true,
+        is_system: false,
+        send_date: Date.now(),
+        mes: content,
+        extra: { sim_manager_ghost: true },
+    };
+    chat.push(ghost);
+    return ghost;
+}
+function popSimGhostMessage(ghost) {
+    if (!ghost) return;
+    const idx = chat.lastIndexOf(ghost);
+    if (idx !== -1) chat.splice(idx, 1);
+}
+
+/**
+ * 시뮬 생성 공통 래퍼.
+ *  - directive: 시스템 지시문 (SIM_SYSTEM_INSTRUCTION / SIM_CONTINUE_INSTRUCTION)
+ *  - ooc:       OOC 본문 (유저가 입력한 시뮬 프롬프트 등)
+ *  - position:  SIM_POSITIONS.* 중 하나 (sim 별 저장값)
+ */
+async function runSimGeneration(directive, ooc, position = SIM_POSITIONS.LAST_MESSAGE) {
+    position = normalizeSimPosition(position);
+    let ghost = null;
+    let quietPromptArg = '';
+
+    try {
+        switch (position) {
+            case SIM_POSITIONS.LAST_MESSAGE:
+                setSimDirectiveSystem(directive);
+                ghost = pushSimGhostMessage(ooc);
+                break;
+            case SIM_POSITIONS.DEPTH_1:
+                setSimDirectiveSystem(directive);
+                setSimOocInChat(ooc, 1);
+                break;
+            case SIM_POSITIONS.DEPTH_0:
+                setSimDirectiveSystem(directive);
+                setSimOocInChat(ooc, 0);
+                break;
+            case SIM_POSITIONS.BOTTOM:
+                // 맨 밑: 지시문 + OOC 를 quietPrompt 로 함께 (controlPrompts, </history> 밖)
+                quietPromptArg = `${directive}\n\n${ooc}`;
+                break;
+        }
+        return await generateQuietPrompt({ quietPrompt: quietPromptArg, quietToLoud: true });
+    } finally {
+        popSimGhostMessage(ghost);
+        clearSimDirectiveSystem();
+        clearSimOocInChat();
+    }
 }
 
 
