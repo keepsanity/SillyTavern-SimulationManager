@@ -193,6 +193,50 @@ function getDefaultInjectPosition() {
     return normalizeSimPosition(extension_settings[EXTENSION_NAME].defaultInjectPosition);
 }
 
+// ============================================
+// Char/User Swap & Pronoun Swap
+// ============================================
+// 대명사 매핑: 'her → him' 단방향 선택 (모호성 감수)
+const PRONOUN_MAP = {
+    he: 'she', she: 'he',
+    him: 'her', her: 'him',
+    his: 'her',             // "his" → "her" (소유격 his 도 목적격 her 로 간단히 뭉개기)
+    himself: 'herself', herself: 'himself',
+};
+const PRONOUN_REGEX = /\b(he|she|him|her|his|himself|herself)\b/gi;
+
+function preserveCase(sourceWord, targetWord) {
+    if (!sourceWord) return targetWord;
+    if (sourceWord === sourceWord.toUpperCase() && sourceWord !== sourceWord.toLowerCase()) {
+        return targetWord.toUpperCase();
+    }
+    if (sourceWord[0] === sourceWord[0].toUpperCase() && sourceWord[0] !== sourceWord[0].toLowerCase()) {
+        return targetWord[0].toUpperCase() + targetWord.slice(1).toLowerCase();
+    }
+    return targetWord.toLowerCase();
+}
+
+function applySwap(text, swapCharUser, swapPronouns) {
+    if (!text) return text;
+    let out = text;
+    if (swapCharUser) {
+        // {{char}} ↔ {{user}} 동시 교체
+        out = out.replace(/\{\{(char|user)\}\}/g, (_, name) => (name === 'char' ? '{{user}}' : '{{char}}'));
+    }
+    if (swapPronouns) {
+        out = out.replace(PRONOUN_REGEX, (match) => {
+            const lower = match.toLowerCase();
+            const replacement = PRONOUN_MAP[lower];
+            return replacement ? preserveCase(match, replacement) : match;
+        });
+    }
+    return out;
+}
+
+function getEffectivePromptText(sim) {
+    return applySwap(sim?.promptText || '', !!sim?.swapCharUser, !!sim?.swapPronouns);
+}
+
 function getSimulations() {
     if (!chat_metadata[EXTENSION_NAME]) {
         chat_metadata[EXTENSION_NAME] = { simulations: [] };
@@ -617,6 +661,15 @@ function renderCreateView() {
             ).join('')}
         </select>
 
+        <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+            <input type="checkbox" id="sim-swap-charuser" />
+            <span>{{char}} ↔ {{user}} 교체</span>
+        </label>
+        <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="sim-swap-pronouns" />
+            <span>대명사 교체 (he/she, him/her, ...)</span>
+        </label>
+
         <div class="sim-create-options">`
             // <label class="sim-checkbox-label">
             //     <input type="checkbox" id="sim-no-save" />
@@ -776,11 +829,21 @@ function renderDetailView() {
             ${presetBoxContent}
         </div>
 
-        <div class="sim-detail-prompt-box" style="display:flex; align-items:center; gap:8px;">
-            <span style="font-size:12px; font-weight:600;">주입 위치:</span>
-            <select class="sim-saved-prompts-select" id="sim-detail-position-select" style="flex:1;">
-                ${positionSelectOptions}
-            </select>
+        <div class="sim-detail-prompt-box" style="display:flex; flex-direction:column; gap:6px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:12px; font-weight:600;">주입 위치:</span>
+                <select class="sim-saved-prompts-select" id="sim-detail-position-select" style="flex:1;">
+                    ${positionSelectOptions}
+                </select>
+            </div>
+            <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input type="checkbox" id="sim-detail-swap-charuser" ${sim.swapCharUser ? 'checked' : ''} />
+                <span>{{char}} ↔ {{user}} 교체</span>
+            </label>
+            <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input type="checkbox" id="sim-detail-swap-pronouns" ${sim.swapPronouns ? 'checked' : ''} />
+                <span>대명사 교체 (he/she, him/her, ...)</span>
+            </label>
         </div>
 
         <div class="sim-response-area">
@@ -826,6 +889,16 @@ function renderDetailView() {
     // 주입 위치 변경
     document.getElementById('sim-detail-position-select')?.addEventListener('change', (e) => {
         sim.injectPosition = normalizeSimPosition(e.target.value);
+        if (!tempSim || tempSim.id !== sim.id) saveSimulations();
+    });
+
+    // 스왑 토글 변경
+    document.getElementById('sim-detail-swap-charuser')?.addEventListener('change', (e) => {
+        sim.swapCharUser = !!e.target.checked;
+        if (!tempSim || tempSim.id !== sim.id) saveSimulations();
+    });
+    document.getElementById('sim-detail-swap-pronouns')?.addEventListener('change', (e) => {
+        sim.swapPronouns = !!e.target.checked;
         if (!tempSim || tempSim.id !== sim.id) saveSimulations();
     });
 
@@ -1549,12 +1622,15 @@ async function handleSendSimulation() {
     const noSave = document.getElementById('sim-no-save')?.checked || false;
     const loadedPromptId = document.getElementById('sim-load-prompt')?.value || '';
     const chosenPosition = normalizeSimPosition(document.getElementById('sim-position-select')?.value);
+    const chosenSwapCharUser = !!document.getElementById('sim-swap-charuser')?.checked;
+    const chosenSwapPronouns = !!document.getElementById('sim-swap-pronouns')?.checked;
 
     // 프리셋 선택값 캡처
     const chosenPresetName = document.getElementById('sim-preset-select')?.value || '';
     const chosenTogglePresetName = document.getElementById('sim-toggle-preset-select')?.value || '';
 
-    const resolvedPrompt = substituteParams(rawPrompt);
+    // 스왑 먼저 적용한 뒤 substituteParams
+    const resolvedPrompt = substituteParams(applySwap(rawPrompt, chosenSwapCharUser, chosenSwapPronouns));
 
     // 프롬프트 이름 결정
     ensureSettings();
@@ -1577,6 +1653,8 @@ async function handleSendSimulation() {
             presetName: chosenPresetName,
             togglePresetName: chosenTogglePresetName,
             injectPosition: chosenPosition,
+            swapCharUser: chosenSwapCharUser,
+            swapPronouns: chosenSwapPronouns,
         };
 
         sims.push(sim);
@@ -1616,6 +1694,8 @@ async function handleSendSimulation() {
             presetName: chosenPresetName,
             togglePresetName: chosenTogglePresetName,
             injectPosition: chosenPosition,
+            swapCharUser: chosenSwapCharUser,
+            swapPronouns: chosenSwapPronouns,
         };
         currentView = 'detail';
         isEditingPrompt = false;
@@ -1655,7 +1735,7 @@ async function handleSendSimulation() {
 }
 
 async function handleRegenerateSimulation(sim) {
-    const resolvedPrompt = substituteParams(sim.promptText);
+    const resolvedPrompt = substituteParams(getEffectivePromptText(sim));
 
     const btn = document.getElementById('sim-regenerate');
     if (btn) {
@@ -1698,7 +1778,7 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
         return;
     }
 
-    const continuePrompt = substituteParams(sim.promptText);
+    const continuePrompt = substituteParams(getEffectivePromptText(sim));
 
     const btn = document.getElementById(isGlobal ? 'sim-gv-continue' : 'sim-continue');
     if (btn) {
@@ -1750,8 +1830,11 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
 }
 
 const SIM_CONTINUE_INSTRUCTION = `<simulation_continue_directive priority="critical">
-<rule>This is a CONTINUATION of a previous simulation response.</rule>
-<rule>Continue writing EXACTLY from where the previous response ended. Do NOT repeat any part of the existing response.</rule>
+<rule>This is a CONTINUATION of a previous simulation response — NOT a regular roleplay turn.</rule>
+<rule>Write the NEXT content that comes AFTER the existing response. The user wants to see WHAT HAPPENS NEXT.</rule>
+<rule>Do NOT refine, rewrite, polish, or expand the existing response. The existing response is already finalized — move FORWARD from it.</rule>
+<rule>Continue from EXACTLY where the previous response ended. Do NOT repeat any part of the existing response.</rule>
+<rule>Stay focused on the ORIGINAL simulation request. Do NOT drift into generic roleplay narration or wrap-up prose.</rule>
 <rule>Maintain the same tone, style, and context as the existing response.</rule>
 <rule>Output ONLY the continuation text. Do NOT include any meta-commentary or acknowledgment.</rule>
 </simulation_continue_directive>`;
@@ -1904,7 +1987,7 @@ function showPartRevisionDialog(sim, responseIdx, partIdx, isGlobal = false) {
 </revision_task>
 
 <original_request context_only="true">
-${sim.promptText}
+${getEffectivePromptText(sim)}
 </original_request>
 ${precedingContext}
 <original_message target="revision">
