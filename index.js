@@ -785,35 +785,58 @@ function renderDetailView() {
             </details>`;
     }
 
-    // 프리셋 정보 표시
+    // ===== 설정 요약 & 편집 패널 =====
     const simPresetLabel = sim.presetName || getCurrentPresetName() || '(없음)';
     const simTogglePresetRaw = sim.togglePresetName || 'default';
     const simTogglePresetLabel = simTogglePresetRaw === 'default' ? '기본' : simTogglePresetRaw;
     const togglesEnabledForDetail = isCustomPresetTogglesEnabled();
-    const presetBoxContent = `
-        <div class="sim-detail-prompt-header">
-            <div class="sim-detail-prompt-label">
-                프리셋: ${escapeHtml(simPresetLabel)}${togglesEnabledForDetail ? ` / 토글: ${escapeHtml(simTogglePresetLabel)}` : ''}
-            </div>
-            <button class="sim-btn-icon" id="sim-edit-preset-btn" title="프리셋 변경"><i class="fa-solid fa-pen"></i> 변경</button>
-        </div>
-        <div class="sim-detail-preset-edit" id="sim-detail-preset-edit" style="display:none; padding:8px 4px 4px;">
-            <label style="font-size:11px;">프리셋</label>
-            <select class="sim-saved-prompts-select" id="sim-detail-preset-select"></select>
-            ${togglesEnabledForDetail ? `
-            <label style="font-size:11px; margin-top:6px;">토글 프리셋</label>
-            <select class="sim-saved-prompts-select" id="sim-detail-toggle-preset-select"></select>
-            ` : ''}
-            <div style="display:flex; gap:6px; margin-top:8px; justify-content:flex-end;">
-                <button class="sim-btn sim-btn-sm sim-btn-primary" id="sim-detail-preset-save">저장</button>
-            </div>
-        </div>`;
-
-    // 주입 위치 select
     const simPosition = normalizeSimPosition(sim.injectPosition);
     const positionSelectOptions = Object.entries(SIM_POSITION_LABELS).map(([v, l]) =>
         `<option value="${v}"${v === simPosition ? ' selected' : ''}>${escapeHtml(l)}</option>`
     ).join('');
+
+    const summaryParts = [];
+    summaryParts.push(`프리셋 <b>${escapeHtml(simPresetLabel)}</b>`);
+    if (togglesEnabledForDetail) summaryParts.push(`토글 <b>${escapeHtml(simTogglePresetLabel)}</b>`);
+    summaryParts.push(`위치 <b>${escapeHtml(SIM_POSITION_LABELS[simPosition])}</b>`);
+    const swapBits = [];
+    if (sim.swapCharUser) swapBits.push('{{char}}↔{{user}}');
+    if (sim.swapPronouns) swapBits.push('대명사');
+    if (swapBits.length) summaryParts.push(`<span style="color:var(--SmartThemeQuoteColor, #7c83ff);">✓ 스왑: <b>${swapBits.join(' + ')}</b></span>`);
+
+    const settingsBoxContent = `
+        <div class="sim-detail-prompt-header" id="sim-edit-settings-btn" style="cursor:pointer;">
+            <div class="sim-detail-prompt-label" style="font-size:12px; display:flex; align-items:center; gap:6px;">
+                <i class="fa-solid fa-chevron-right sim-settings-arrow" id="sim-settings-arrow"></i>
+                <span id="sim-detail-settings-summary">⚙ ${summaryParts.join(' / ')}</span>
+            </div>
+        </div>
+        <div class="sim-detail-settings-edit" id="sim-detail-settings-edit" style="display:none; padding:8px 4px 4px; flex-direction:column; gap:8px;">
+            <div>
+                <label style="font-size:11px;">프리셋</label>
+                <select class="sim-saved-prompts-select" id="sim-detail-preset-select"></select>
+            </div>
+            ${togglesEnabledForDetail ? `
+            <div>
+                <label style="font-size:11px;">토글 프리셋</label>
+                <select class="sim-saved-prompts-select" id="sim-detail-toggle-preset-select"></select>
+            </div>
+            ` : ''}
+            <div>
+                <label style="font-size:11px;">주입 위치</label>
+                <select class="sim-saved-prompts-select" id="sim-detail-position-select">
+                    ${positionSelectOptions}
+                </select>
+            </div>
+            <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input type="checkbox" id="sim-detail-swap-charuser" ${sim.swapCharUser ? 'checked' : ''} />
+                <span>{{char}} ↔ {{user}} 교체</span>
+            </label>
+            <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input type="checkbox" id="sim-detail-swap-pronouns" ${sim.swapPronouns ? 'checked' : ''} />
+                <span>대명사 교체 (he/she, him/her, ...)</span>
+            </label>
+        </div>`;
 
     const html = `
     <div class="sim-detail-view">
@@ -826,24 +849,7 @@ function renderDetailView() {
         </div>
 
         <div class="sim-detail-prompt-box">
-            ${presetBoxContent}
-        </div>
-
-        <div class="sim-detail-prompt-box" style="display:flex; flex-direction:column; gap:6px;">
-            <div style="display:flex; align-items:center; gap:8px;">
-                <span style="font-size:12px; font-weight:600;">주입 위치:</span>
-                <select class="sim-saved-prompts-select" id="sim-detail-position-select" style="flex:1;">
-                    ${positionSelectOptions}
-                </select>
-            </div>
-            <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input type="checkbox" id="sim-detail-swap-charuser" ${sim.swapCharUser ? 'checked' : ''} />
-                <span>{{char}} ↔ {{user}} 교체</span>
-            </label>
-            <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input type="checkbox" id="sim-detail-swap-pronouns" ${sim.swapPronouns ? 'checked' : ''} />
-                <span>대명사 교체 (he/she, him/her, ...)</span>
-            </label>
+            ${settingsBoxContent}
         </div>
 
         <div class="sim-response-area">
@@ -886,21 +892,7 @@ function renderDetailView() {
     // 이벤트 바인딩
     document.getElementById('sim-back-to-list')?.addEventListener('click', goToList);
 
-    // 주입 위치 변경
-    document.getElementById('sim-detail-position-select')?.addEventListener('change', (e) => {
-        sim.injectPosition = normalizeSimPosition(e.target.value);
-        if (!tempSim || tempSim.id !== sim.id) saveSimulations();
-    });
-
-    // 스왑 토글 변경
-    document.getElementById('sim-detail-swap-charuser')?.addEventListener('change', (e) => {
-        sim.swapCharUser = !!e.target.checked;
-        if (!tempSim || tempSim.id !== sim.id) saveSimulations();
-    });
-    document.getElementById('sim-detail-swap-pronouns')?.addEventListener('change', (e) => {
-        sim.swapPronouns = !!e.target.checked;
-        if (!tempSim || tempSim.id !== sim.id) saveSimulations();
-    });
+    // 설정 박스: 모든 변경 즉시 반영
 
     // 수정 관련 이벤트
     document.getElementById('sim-edit-prompt-btn')?.addEventListener('click', (e) => {
@@ -930,11 +922,34 @@ function renderDetailView() {
         if (typeof toastr !== 'undefined') toastr.success('시뮬 내용이 수정되었습니다.', '시뮬 매니저');
     });
 
-    // 프리셋 편집 패널
-    const presetEditBtn = document.getElementById('sim-edit-preset-btn');
-    const presetEditPanel = document.getElementById('sim-detail-preset-edit');
+    // ===== 통합 설정 패널 =====
+    const settingsEditBtn = document.getElementById('sim-edit-settings-btn');
+    const settingsEditPanel = document.getElementById('sim-detail-settings-edit');
     const detailPresetSelect = document.getElementById('sim-detail-preset-select');
     const detailTogglePresetSelect = document.getElementById('sim-detail-toggle-preset-select');
+    const detailPositionSelect = document.getElementById('sim-detail-position-select');
+    const detailSwapCharUser = document.getElementById('sim-detail-swap-charuser');
+    const detailSwapPronouns = document.getElementById('sim-detail-swap-pronouns');
+
+    const saveSimIfNotTemp = () => { if (!tempSim || tempSim.id !== sim.id) saveSimulations(); };
+    const refreshSummary = () => {
+        const target = document.getElementById('sim-detail-settings-summary');
+        if (!target) return;
+        const parts = [];
+        const presetLbl = sim.presetName || getCurrentPresetName() || '(없음)';
+        parts.push(`프리셋 <b>${escapeHtml(presetLbl)}</b>`);
+        if (togglesEnabledForDetail) {
+            const tgl = sim.togglePresetName || 'default';
+            parts.push(`토글 <b>${escapeHtml(tgl === 'default' ? '기본' : tgl)}</b>`);
+        }
+        const pos = normalizeSimPosition(sim.injectPosition);
+        parts.push(`위치 <b>${escapeHtml(SIM_POSITION_LABELS[pos])}</b>`);
+        const bits = [];
+        if (sim.swapCharUser) bits.push('{{char}}↔{{user}}');
+        if (sim.swapPronouns) bits.push('대명사');
+        if (bits.length) parts.push(`<span style="color:var(--SmartThemeQuoteColor, #7c83ff);">✓ 스왑: <b>${bits.join(' + ')}</b></span>`);
+        target.innerHTML = `⚙ ${parts.join(' / ')}`;
+    };
 
     function fillDetailPresetOptions() {
         if (!detailPresetSelect) return;
@@ -953,7 +968,6 @@ function renderDetailView() {
         if (!detailTogglePresetSelect) return;
         const chosen = detailPresetSelect?.value || getCurrentPresetName();
         const names = getTogglePresetNames(chosen);
-        // 선택한 프리셋의 것이면 sim.togglePresetName 선호, 아니면 default
         const target = (chosen === (sim.presetName || getCurrentPresetName()))
             ? (sim.togglePresetName || 'default')
             : 'default';
@@ -967,31 +981,52 @@ function renderDetailView() {
         }
     }
 
-    presetEditBtn?.addEventListener('click', (e) => {
+    // 패널 토글 (화살표 포함)
+    const settingsArrow = document.getElementById('sim-settings-arrow');
+    settingsEditBtn?.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!presetEditPanel) return;
-        const isOpen = presetEditPanel.style.display !== 'none';
+        if (!settingsEditPanel) return;
+        const isOpen = settingsEditPanel.style.display !== 'none';
         if (isOpen) {
-            presetEditPanel.style.display = 'none';
+            settingsEditPanel.style.display = 'none';
+            if (settingsArrow) settingsArrow.classList.remove('fa-chevron-down'), settingsArrow.classList.add('fa-chevron-right');
             return;
         }
         fillDetailPresetOptions();
         fillDetailTogglePresetOptions();
-        presetEditPanel.style.display = '';
+        settingsEditPanel.style.display = 'flex';
+        if (settingsArrow) settingsArrow.classList.remove('fa-chevron-right'), settingsArrow.classList.add('fa-chevron-down');
     });
 
-    detailPresetSelect?.addEventListener('change', fillDetailTogglePresetOptions);
-
-    document.getElementById('sim-detail-preset-save')?.addEventListener('click', () => {
-        sim.presetName = detailPresetSelect?.value || '';
-        sim.togglePresetName = detailTogglePresetSelect?.value || 'default';
-        // tempSim 이면 saveSimulations 가 의미 없음 — temp 는 그대로 메모리 갱신
-        if (!tempSim || tempSim.id !== sim.id) {
-            saveSimulations();
-        }
-        renderDetailView();
-        if (typeof toastr !== 'undefined') toastr.success('프리셋 설정이 저장되었습니다.', '시뮬 매니저');
+    // 프리셋 변경 → 즉시 저장 + 토글 옵션 재갱신
+    detailPresetSelect?.addEventListener('change', () => {
+        sim.presetName = detailPresetSelect.value || '';
+        // 프리셋이 바뀌면 토글은 default 로 초기화 (선택한 프리셋의 옵션이 달라지므로)
+        sim.togglePresetName = 'default';
+        fillDetailTogglePresetOptions();
+        saveSimIfNotTemp();
+        refreshSummary();
+    });
+    detailTogglePresetSelect?.addEventListener('change', () => {
+        sim.togglePresetName = detailTogglePresetSelect.value || 'default';
+        saveSimIfNotTemp();
+        refreshSummary();
+    });
+    detailPositionSelect?.addEventListener('change', () => {
+        sim.injectPosition = normalizeSimPosition(detailPositionSelect.value);
+        saveSimIfNotTemp();
+        refreshSummary();
+    });
+    detailSwapCharUser?.addEventListener('change', () => {
+        sim.swapCharUser = !!detailSwapCharUser.checked;
+        saveSimIfNotTemp();
+        refreshSummary();
+    });
+    detailSwapPronouns?.addEventListener('change', () => {
+        sim.swapPronouns = !!detailSwapPronouns.checked;
+        saveSimIfNotTemp();
+        refreshSummary();
     });
 
     // 새 챗으로 시작
