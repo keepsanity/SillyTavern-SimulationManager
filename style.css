@@ -504,6 +504,10 @@
     word-break: break-word;
 }
 
+.sim-response-text.mes_text {
+    padding: 0px 0px !important;
+}
+
 .sim-response-text.loading {
     color: var(--SmartThemeBodyColor, #888);
     font-style: italic;
