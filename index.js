@@ -11,10 +11,11 @@
  */
 
 import { extension_settings, saveMetadataDebounced, getContext } from '../../../extensions.js';
-import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, setExtensionPrompt, extension_prompt_types, extension_prompt_roles, doNewChat, chat, saveChatConditional, printMessages } from '../../../../script.js';
+import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, setExtensionPrompt, extension_prompt_types, extension_prompt_roles, doNewChat, chat, saveChatConditional, printMessages, addOneMessage } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
 import { getPresetManager } from '../../../preset-manager.js';
 import { oai_settings, promptManager } from '../../../openai.js';
+import { playMessageSound } from '../../../power-user.js';
 
 const EXTENSION_NAME = 'SillyTavern-SimulationManager';
 const CUSTOM_PRESET_EXT = 'SillyTavern-CustomPreset';
@@ -866,6 +867,7 @@ function renderDetailView() {
             ${responseCount > 0 ? `
             <div class="sim-response-actions-row">
                 <button class="sim-btn-icon" id="sim-new-chat-btn" title="이 응답으로 새 챗 시작"><i class="fa-solid fa-comment-dots"></i> 새 챗</button>
+                <button class="sim-btn-icon" id="sim-insert-chat-btn" title="이 응답을 기존 챗에 삽입"><i class="fa-solid fa-arrow-down-to-line"></i> 기존 챗</button>
                 ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
             </div>
             ` : ''}
@@ -1034,6 +1036,13 @@ function renderDetailView() {
         const responseText = getFullResponseText(sim, sim.currentIndex || 0);
         if (!responseText) return;
         showNewChatDialog(sim.promptText, responseText);
+    });
+
+    // 기존 챗에 삽입
+    document.getElementById('sim-insert-chat-btn')?.addEventListener('click', async () => {
+        const responseText = getFullResponseText(sim, sim.currentIndex || 0);
+        if (!responseText) return;
+        showInsertToChatDialog(sim.promptText, responseText);
     });
 
     // 파트별 이벤트 위임 (수정/번역/삭제)
@@ -2147,6 +2156,69 @@ async function startNewChatWithGreeting(promptText, responseText) {
     }
 }
 
+function showInsertToChatDialog(promptText, responseText) {
+    const overlay = document.createElement('div');
+    overlay.className = 'sim-dialog-overlay';
+    overlay.innerHTML = `
+        <div class="sim-dialog-box">
+            <div class="sim-dialog-title">기존 챗에 삽입</div>
+            <div class="sim-dialog-desc">이 시뮬 응답을 현재 채팅방 끝에 추가합니다.</div>
+            <div class="sim-dialog-buttons">
+                <button class="sim-btn" id="sim-insert-response-only">응답만</button>
+                <button class="sim-btn" id="sim-insert-with-request">요청 포함</button>
+                <button class="sim-btn sim-btn-muted" id="sim-insert-cancel">취소</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#sim-insert-response-only').addEventListener('click', async () => {
+        overlay.remove();
+        await insertSimIntoCurrentChat(null, responseText);
+    });
+    overlay.querySelector('#sim-insert-with-request').addEventListener('click', async () => {
+        overlay.remove();
+        await insertSimIntoCurrentChat(promptText, responseText);
+    });
+    overlay.querySelector('#sim-insert-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+async function insertSimIntoCurrentChat(promptText, responseText) {
+    try {
+        const context = getContext();
+
+        if (promptText) {
+            const userMsg = {
+                name: context.name1,
+                is_user: true,
+                is_system: false,
+                send_date: new Date().toISOString(),
+                mes: promptText,
+                extra: {},
+            };
+            chat.push(userMsg);
+            addOneMessage(userMsg);
+        }
+
+        const charMsg = {
+            name: context.name2,
+            is_user: false,
+            is_system: false,
+            send_date: new Date().toISOString(),
+            mes: responseText,
+            extra: {},
+        };
+        chat.push(charMsg);
+        addOneMessage(charMsg);
+
+        await saveChatConditional();
+        toastr.success('시뮬 응답이 현재 챗에 삽입되었습니다.', '시뮬 매니저');
+    } catch (err) {
+        console.error(DEBUG_PREFIX, 'Failed to insert into chat:', err);
+        toastr.error('기존 챗 삽입에 실패했습니다.', '시뮬 매니저');
+    }
+}
+
 // ============================================
 // Notification
 // ============================================
@@ -2161,6 +2233,8 @@ function showSimNotification(sim) {
             { timeOut: 4000, onclick: () => openPopupToSim(sim.id) },
         );
     }
+
+    try { playMessageSound(); } catch (e) { console.error(DEBUG_PREFIX, 'playMessageSound failed:', e); }
 }
 
 // ============================================
