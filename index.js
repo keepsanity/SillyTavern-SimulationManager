@@ -867,7 +867,7 @@ function renderDetailView() {
             ${responseCount > 0 ? `
             <div class="sim-response-actions-row">
                 <button class="sim-btn-icon" id="sim-new-chat-btn" title="이 응답으로 새 챗 시작"><i class="fa-solid fa-comment-dots"></i> 새 챗</button>
-                <button class="sim-btn-icon" id="sim-insert-chat-btn" title="이 응답을 기존 챗에 삽입"><i class="fa-solid fa-arrow-down-to-line"></i> 기존 챗</button>
+                <button class="sim-btn-icon" id="sim-insert-chat-btn" title="이 응답을 기존 챗에 삽입"><i class="fa-solid fa-file-import"></i> 기존 챗</button>
                 ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
             </div>
             ` : ''}
