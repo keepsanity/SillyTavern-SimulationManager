@@ -106,11 +106,12 @@
     padding: 12px;
     border: 2px dashed var(--SmartThemeBorderColor, #555);
     border-radius: 8px;
-    background: transparent;
+    background-color: var(--SmartThemeBotMesBlurTintColor, #1a1a2e);
     color: var(--SmartThemeBodyColor, #ccc);
+    filter: grayscale(0.5);
     cursor: pointer;
     font-size: 14px;
-    transition: all 0.2s;
+    transition: var(--animation-duration-2x, 0.2s);
     margin-bottom: 12px;
     display: flex;
     align-items: center;
@@ -119,9 +120,9 @@
 }
 
 .sim-new-btn:hover {
+    background-color: var(--white30a, rgba(255, 255, 255, 0.18));
     border-color: var(--SmartThemeQuoteColor, #7c83ff);
     color: var(--SmartThemeQuoteColor, #7c83ff);
-    background: rgba(124, 131, 255, 0.05);
 }
 
 .sim-item {
@@ -130,13 +131,14 @@
     border-radius: 8px;
     margin-bottom: 8px;
     cursor: pointer;
-    transition: all 0.2s;
-    background: rgba(255, 255, 255, 0.02);
+    transition: var(--animation-duration-2x, 0.2s);
+    background-color: var(--SmartThemeBotMesBlurTintColor, #1a1a2e);
+    filter: grayscale(0.5);
 }
 
 .sim-item:hover {
+    background-color: var(--white30a, rgba(255, 255, 255, 0.18));
     border-color: var(--SmartThemeQuoteColor, #7c83ff);
-    background: rgba(124, 131, 255, 0.05);
 }
 
 .sim-item-prompt {
@@ -317,7 +319,7 @@
     padding: 12px;
     border: 1px solid var(--SmartThemeBorderColor, #444);
     border-radius: 8px;
-    background: rgba(124, 131, 255, 0.05);
+    background: var(--SmartThemeUserMesBlurTintColor, rgba(124, 131, 255, 0.05));
 }
 
 .sim-prompt-toggle {
@@ -421,7 +423,7 @@
     border-radius: 8px;
     padding: 16px;
     min-height: 150px;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--SmartThemeBotMesBlurTintColor, rgba(255, 255, 255, 0.02));
 }
 
 .sim-response-header {
@@ -444,25 +446,28 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    background: none;
+    background-color: var(--SmartThemeBlurTintColor, #1a1a2e);
     border: 1px solid var(--SmartThemeBorderColor, #444);
-    color: var(--SmartThemeBodyColor, #aaa);
-    border-radius: 4px;
+    color: var(--SmartThemeBodyColor, #ddd);
+    filter: grayscale(0.5);
+    border-radius: 5px;
     padding: 4px 7px;
     cursor: pointer;
     font-size: 11px;
-    transition: all 0.2s;
+    transition: var(--animation-duration-2x, 0.2s);
     line-height: 1;
     white-space: nowrap;
     flex: 0 0 auto;
 }
 
-.sim-btn-icon:hover {
+.sim-btn-icon:not(:disabled):hover {
+    background-color: var(--white30a, rgba(255, 255, 255, 0.18));
     border-color: var(--SmartThemeQuoteColor, #7c83ff);
     color: var(--SmartThemeQuoteColor, #7c83ff);
 }
 
-.sim-btn-icon-danger:hover {
+.sim-btn-icon-danger:not(:disabled):hover {
+    background-color: rgba(255, 107, 107, 0.18);
     border-color: #ff6b6b;
     color: #ff6b6b;
 }
