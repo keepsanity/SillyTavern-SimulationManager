@@ -770,7 +770,7 @@ function renderDetailView() {
     if (isEditingPrompt) {
         promptBoxContent = `
             <div class="sim-detail-prompt-label">시뮬 요청 <span style="font-size:10px; color:#888;">(수정 중)</span></div>
-            <textarea class="sim-edit-prompt-textarea" id="sim-edit-prompt-input">${escapeHtml(sim.promptText)}</textarea>
+            <textarea class="sim-edit-prompt-textarea" id="sim-edit-prompt-input">${escapeHtml(normalizePromptText(sim.promptText))}</textarea>
             <div class="sim-edit-prompt-actions">
                 <button class="sim-btn" id="sim-edit-cancel">취소</button>
                 <button class="sim-btn sim-btn-primary" id="sim-edit-save">저장</button>
@@ -782,7 +782,7 @@ function renderDetailView() {
                     <div class="sim-detail-prompt-label"><i class="fa-solid fa-chevron-right sim-prompt-arrow"></i> 시뮬 요청</div>
                     <button class="sim-btn-icon" id="sim-edit-prompt-btn" title="수정"><i class="fa-solid fa-pen"></i> 수정</button>
                 </summary>
-                <div class="sim-detail-prompt-text">${escapeHtml(sim.promptText)}</div>
+                <div class="sim-detail-prompt-text">${escapeHtml(normalizePromptText(sim.promptText))}</div>
             </details>`;
     }
 
@@ -912,7 +912,7 @@ function renderDetailView() {
     document.getElementById('sim-edit-save')?.addEventListener('click', () => {
         const textarea = document.getElementById('sim-edit-prompt-input');
         if (!textarea) return;
-        const newText = textarea.value.trim();
+        const newText = normalizePromptText(textarea.value.trim());
         if (!newText) {
             alert('내용을 입력해주세요.');
             return;
@@ -1330,7 +1330,7 @@ function renderGlobalDetailView() {
     if (isEditingGlobalPrompt) {
         promptBoxContent = `
             <div class="sim-detail-prompt-label">시뮬 요청 <span style="font-size:10px; color:#888;">(수정 중)</span></div>
-            <textarea class="sim-edit-prompt-textarea" id="sim-gv-edit-prompt-input">${escapeHtml(sim.promptText)}</textarea>
+            <textarea class="sim-edit-prompt-textarea" id="sim-gv-edit-prompt-input">${escapeHtml(normalizePromptText(sim.promptText))}</textarea>
             <div class="sim-edit-prompt-actions">
                 <button class="sim-btn" id="sim-gv-edit-cancel">취소</button>
                 <button class="sim-btn sim-btn-primary" id="sim-gv-edit-save">저장</button>
@@ -1342,7 +1342,7 @@ function renderGlobalDetailView() {
                     <div class="sim-detail-prompt-label"><i class="fa-solid fa-chevron-right sim-prompt-arrow"></i> 시뮬 요청</div>
                     <button class="sim-btn-icon" id="sim-gv-edit-prompt-btn" title="수정"><i class="fa-solid fa-pen"></i> 수정</button>
                 </summary>
-                <div class="sim-detail-prompt-text">${escapeHtml(sim.promptText)}</div>
+                <div class="sim-detail-prompt-text">${escapeHtml(normalizePromptText(sim.promptText))}</div>
             </details>`;
     }
 
@@ -1436,7 +1436,7 @@ function renderGlobalDetailView() {
     document.getElementById('sim-gv-edit-save')?.addEventListener('click', () => {
         const textarea = document.getElementById('sim-gv-edit-prompt-input');
         if (!textarea) return;
-        const newText = textarea.value.trim();
+        const newText = normalizePromptText(textarea.value.trim());
         if (!newText) { alert('내용을 입력해주세요.'); return; }
         sim.promptText = newText;
         isEditingGlobalPrompt = false;
@@ -1655,7 +1655,7 @@ async function handleSendSimulation() {
     const promptInput = document.getElementById('sim-prompt-input');
     if (!promptInput) return;
 
-    const rawPrompt = promptInput.value.trim();
+    const rawPrompt = normalizePromptText(promptInput.value.trim());
     if (!rawPrompt) {
         alert('시뮬레이션 내용을 입력해주세요.');
         return;
@@ -2440,6 +2440,12 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// 외부에서 복붙된 nbsp 류를 일반 공백으로 정리 (시뮬 요청 텍스트에만 적용)
+function normalizePromptText(text) {
+    if (typeof text !== 'string') return text;
+    return text.replace(/[  ]/g, ' ');
 }
 
 /**

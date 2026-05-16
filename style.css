@@ -365,6 +365,9 @@
     font-size: 13px;
     color: var(--SmartThemeBodyColor, #ddd);
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    max-width: 100%;
     line-height: 1.5;
 }
 
