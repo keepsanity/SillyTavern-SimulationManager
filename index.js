@@ -550,6 +550,7 @@ function renderListView() {
     const sims = getSimulations();
     const container = document.getElementById('sim-content');
     if (!container) return;
+    maybeResetContentScroll('list');
 
     let html = `<div class="sim-list-view">`;
     html += `<button class="sim-new-btn" id="sim-go-create"><i class="fa-solid fa-plus"></i> 새 시뮬레이션</button>`;
@@ -606,6 +607,7 @@ function renderListView() {
 function renderCreateView() {
     const container = document.getElementById('sim-content');
     if (!container) return;
+    maybeResetContentScroll('create');
 
     ensureSettings();
     const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
@@ -761,6 +763,7 @@ function renderDetailView() {
         goToList();
         return;
     }
+    maybeResetContentScroll('detail', sim.id);
 
     const responseCount = sim.responses ? sim.responses.length : 0;
     const currentIdx = sim.currentIndex || 0;
@@ -1171,6 +1174,7 @@ function renderDetailView() {
 function renderGlobalListView() {
     const container = document.getElementById('sim-content');
     if (!container) return;
+    maybeResetContentScroll('globalList');
 
     ensureSettings();
     const global = extension_settings[EXTENSION_NAME].globalSimulations;
@@ -1235,6 +1239,7 @@ function renderGlobalListView() {
 function renderGlobalSimListView() {
     const container = document.getElementById('sim-content');
     if (!container) return;
+    maybeResetContentScroll('globalSimList', globalViewChatKey);
 
     ensureSettings();
     const global = extension_settings[EXTENSION_NAME].globalSimulations;
@@ -1321,6 +1326,7 @@ function renderGlobalDetailView() {
         renderGlobalListView();
         return;
     }
+    maybeResetContentScroll('globalDetail', sim.id);
 
     const responseCount = sim.responses ? sim.responses.length : 0;
     const currentIdx = globalViewSimIndex || 0;
@@ -2383,6 +2389,19 @@ function bindSettingsEvents() {
 // ============================================
 // Navigation Helpers
 // ============================================
+let lastRenderedView = null;
+let lastRenderedSimId = null;
+
+// 뷰 전환 시에만 sim-content 스크롤을 맨 위로. 같은 뷰의 인-플레이스 재렌더는 스크롤 보존.
+function maybeResetContentScroll(viewKey, simId = null) {
+    if (lastRenderedView !== viewKey || lastRenderedSimId !== simId) {
+        const container = document.getElementById('sim-content');
+        if (container) container.scrollTop = 0;
+        lastRenderedView = viewKey;
+        lastRenderedSimId = simId;
+    }
+}
+
 function goToList() {
     currentView = 'list';
     currentSimId = null;
