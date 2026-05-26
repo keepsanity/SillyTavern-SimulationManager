@@ -516,19 +516,9 @@ function buildSettingsHTML() {
                         <textarea id="sim-translation-prompt" placeholder="비워두면 기본 프롬프트 사용" style="width:100%; min-height:60px; padding:10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; resize:vertical; font-family:inherit; line-height:1.5;"></textarea>
                     </div>
                     <hr />
-                    <h4 style="margin:8px 0 4px; font-size:14px;">저장된 시뮬 프롬프트</h4>
-                    <input type="text" class="sim-prompt-search" id="sim-settings-prompt-search" placeholder="프롬프트 검색 (제목/내용)" />
-                    <select id="sim-prompt-select" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;"></select>
-                    <div id="sim-prompt-edit-area" style="display:flex; flex-direction:column; gap:8px;">
-                        <label style="font-size:12px; color:#aaa;">프롬프트 이름</label>
-                        <input type="text" id="sim-new-prompt-name" placeholder="프롬프트 이름" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px;" />
-                        <label style="font-size:12px; color:#aaa;">프롬프트 내용</label>
-                        <textarea id="sim-new-prompt-content" placeholder="프롬프트 내용" style="width:100%; min-height:100px; padding:10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; resize:vertical; font-family:inherit; line-height:1.5;"></textarea>
-                        <div style="display:flex; gap:8px; justify-content:flex-end;">
-                            <button class="sim-btn sim-btn-danger" id="sim-delete-prompt-btn" style="display:none;">삭제</button>
-                            <button class="sim-btn sim-btn-primary" id="sim-save-prompt-btn">저장</button>
-                        </div>
-                    </div>
+                    <button class="sim-btn sim-btn-primary" id="sim-open-prompt-manager-btn" style="width:100%; margin-top:4px;">
+                        <i class="fa-solid fa-bookmark"></i> 저장된 프롬프트 관리
+                    </button>
                 </div>
             </div>
         </div>
@@ -628,58 +618,102 @@ function renderCreateView() {
 
     // 토글 프리셋 영역 (CustomPreset 설치 + 활성화 시만)
     const togglesEnabled = isCustomPresetTogglesEnabled();
-    const togglePresetBlock = togglesEnabled ? `
-        <label>토글 프리셋 (선택)</label>
-        <select class="sim-saved-prompts-select" id="sim-toggle-preset-select"></select>
+    const togglePresetField = togglesEnabled ? `
+        <div class="sim-field">
+            <label>토글 프리셋 (선택)</label>
+            <select class="sim-saved-prompts-select" id="sim-toggle-preset-select"></select>
+        </div>
     ` : '';
 
+    const positionOptions = Object.entries(SIM_POSITION_LABELS).map(([v, l]) =>
+        `<option value="${v}"${v === getDefaultInjectPosition() ? ' selected' : ''}>${escapeHtml(l)}</option>`
+    ).join('');
+
     const html = `
-    <div class="sim-create-view">
-        <button class="sim-btn" id="sim-back-to-list" style="align-self:flex-start;">
-            <i class="fa-solid fa-arrow-left"></i> 목록으로
-        </button>
-
-        <label>저장된 프롬프트 불러오기</label>
-        <input type="text" class="sim-prompt-search" id="sim-prompt-search" placeholder="프롬프트 검색 (제목/내용)" />
-        <select class="sim-saved-prompts-select" id="sim-load-prompt">
-            ${selectOptions}
-        </select>
-
-        <label>시뮬레이션 제목</label>
-        <input type="text" class="sim-prompt-search" id="sim-title-input" placeholder="제목 (비우면 프롬프트 앞글자 사용)" />
-
-        <label>시뮬레이션 내용</label>
-        <textarea class="sim-prompt-textarea sim-prompt-textarea-lg" id="sim-prompt-input" placeholder="프롬프트 내용"></textarea>
-
-        <label>프리셋 (선택)</label>
-        <select class="sim-saved-prompts-select" id="sim-preset-select">
-            ${presetOptions}
-        </select>
-        ${togglePresetBlock}
-
-        <label>주입 위치</label>
-        <select class="sim-saved-prompts-select" id="sim-position-select">
-            ${Object.entries(SIM_POSITION_LABELS).map(([v, l]) =>
-                `<option value="${v}"${v === getDefaultInjectPosition() ? ' selected' : ''}>${escapeHtml(l)}</option>`
-            ).join('')}
-        </select>
-
-        <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px; margin-top:6px;">
-            <input type="checkbox" id="sim-swap-charuser" />
-            <span>{{char}} ↔ {{user}} 교체</span>
-        </label>
-        <label class="sim-checkbox-label" style="display:flex; align-items:center; gap:6px;">
-            <input type="checkbox" id="sim-swap-pronouns" />
-            <span>대명사 교체 (he/she, him/her, ...)</span>
-        </label>
-
-        <div class="sim-create-options">`
-            // <label class="sim-checkbox-label">
-            //     <input type="checkbox" id="sim-no-save" />
-            //     <span>이 시뮬레이션 저장 안 하기</span>
-            // </label>
-            +`<span class="sim-create-hint" id="sim-overwrite-hint" style="display:none;">제목이나 내용을 수정하면 새 프롬프트로 저장됩니다.</span>
+    <div class="sim-create-view sim-create-view-v2">
+        <div class="sim-create-toolbar">
+            <button class="sim-btn" id="sim-back-to-list">
+                <i class="fa-solid fa-arrow-left"></i> 목록으로
+            </button>
         </div>
+
+        <div class="sim-card sim-card-main">
+            <h4 class="sim-card-title"><i class="fa-solid fa-flask"></i> 새 시뮬레이션</h4>
+            <div class="sim-field">
+                <label>제목</label>
+                <input type="text" class="sim-prompt-search" id="sim-title-input" placeholder="제목 (비우면 프롬프트 앞글자 사용)" />
+            </div>
+            <div class="sim-field">
+                <label>내용</label>
+                <textarea class="sim-prompt-textarea sim-prompt-textarea-lg" id="sim-prompt-input" placeholder="프롬프트 내용"></textarea>
+            </div>
+        </div>
+
+        <details class="sim-drawer">
+            <summary>
+                <span class="sim-drawer-title"><i class="fa-solid fa-bookmark"></i> 저장된 프롬프트 불러오기</span>
+                <i class="fa-solid fa-chevron-down sim-drawer-arrow"></i>
+            </summary>
+            <div class="sim-drawer-body">
+                <input type="text" class="sim-prompt-search" id="sim-prompt-search" placeholder="프롬프트 검색 (제목/내용)" />
+                <select class="sim-saved-prompts-select" id="sim-load-prompt">
+                    ${selectOptions}
+                </select>
+                <span class="sim-create-hint" id="sim-overwrite-hint" style="display:none;">제목이나 내용을 수정하면 새 프롬프트로 저장됩니다.</span>
+            </div>
+        </details>
+
+        <details class="sim-drawer">
+            <summary>
+                <span class="sim-drawer-title"><i class="fa-solid fa-sliders"></i> 실행 옵션</span>
+                <i class="fa-solid fa-chevron-down sim-drawer-arrow"></i>
+            </summary>
+            <div class="sim-drawer-body">
+                <div class="sim-field">
+                    <label>프리셋</label>
+                    <select class="sim-saved-prompts-select" id="sim-preset-select">
+                        ${presetOptions}
+                    </select>
+                </div>
+                ${togglePresetField}
+                <div class="sim-field">
+                    <label>주입 위치</label>
+                    <select class="sim-saved-prompts-select" id="sim-position-select">
+                        ${positionOptions}
+                    </select>
+                </div>
+            </div>
+        </details>
+
+        <details class="sim-drawer">
+            <summary>
+                <span class="sim-drawer-title"><i class="fa-solid fa-arrows-rotate"></i> 변환 옵션</span>
+                <i class="fa-solid fa-chevron-down sim-drawer-arrow"></i>
+            </summary>
+            <div class="sim-drawer-body">
+                <label class="sim-checkbox-label">
+                    <input type="checkbox" id="sim-swap-charuser" />
+                    <span>{{char}} ↔ {{user}} 교체</span>
+                </label>
+                <label class="sim-checkbox-label">
+                    <input type="checkbox" id="sim-swap-pronouns" />
+                    <span>대명사 교체 (he/she, him/her, ...)</span>
+                </label>
+            </div>
+        </details>
+
+        <details class="sim-drawer">
+            <summary>
+                <span class="sim-drawer-title"><i class="fa-solid fa-floppy-disk"></i> 저장 옵션</span>
+                <i class="fa-solid fa-chevron-down sim-drawer-arrow"></i>
+            </summary>
+            <div class="sim-drawer-body">
+                <label class="sim-checkbox-label">
+                    <input type="checkbox" id="sim-no-save-prompt" />
+                    <span>이 프롬프트 저장 안 하기</span>
+                </label>
+            </div>
+        </details>
     </div>`;
 
     container.innerHTML = html;
@@ -1670,6 +1704,7 @@ async function handleSendSimulation() {
     const titleInput = document.getElementById('sim-title-input');
     const customTitle = titleInput ? titleInput.value.trim() : '';
     const noSave = document.getElementById('sim-no-save')?.checked || false;
+    const noSavePrompt = document.getElementById('sim-no-save-prompt')?.checked || false;
     const loadedPromptId = document.getElementById('sim-load-prompt')?.value || '';
     const chosenPosition = normalizeSimPosition(document.getElementById('sim-position-select')?.value);
     const chosenSwapCharUser = !!document.getElementById('sim-swap-charuser')?.checked;
@@ -1710,8 +1745,8 @@ async function handleSendSimulation() {
         sims.push(sim);
         saveSimulations();
 
-        // 보낸 프롬프트 자동 저장
-        {
+        // 보낸 프롬프트 자동 저장 (체크박스로 옵트아웃 가능)
+        if (!noSavePrompt) {
             const loadedPrompt = loadedPromptId ? savedPrompts.find(p => p.id === loadedPromptId) : null;
             const titleChanged = customTitle && loadedPrompt && customTitle !== loadedPrompt.name;
             const contentChanged = !savedPrompts.some(p => p.content === rawPrompt);
@@ -2352,6 +2387,13 @@ function bindSettingsEvents() {
         if (typeof toastr !== 'undefined') toastr.info('삭제되었습니다.', '시뮬 매니저');
     });
 
+    // 프롬프트 관리 버튼
+    document.getElementById('sim-open-prompt-manager-btn')?.addEventListener('click', () => {
+        currentView = 'promptManager';
+        openPopup();
+        renderPromptManagerView();
+    });
+
     // 모아보기 버튼
     document.getElementById('sim-global-viewer-btn')?.addEventListener('click', async () => {
         currentView = 'globalList';
@@ -2400,6 +2442,134 @@ function maybeResetContentScroll(viewKey, simId = null) {
         lastRenderedView = viewKey;
         lastRenderedSimId = simId;
     }
+}
+
+// ============================================
+// Prompt Manager Views
+// ============================================
+function renderPromptManagerView() {
+    const container = document.getElementById('sim-content');
+    if (!container) return;
+    maybeResetContentScroll('promptManager');
+
+    ensureSettings();
+    const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
+
+    let html = `<div class="sim-list-view">
+        <input type="text" class="sim-prompt-search" id="sim-pm-search" placeholder="프롬프트 검색..." style="margin-bottom:8px;" />`;
+
+    if (prompts.length === 0) {
+        html += `<div class="sim-empty"><i class="fa-solid fa-bookmark" style="font-size:28px; margin-bottom:10px; opacity:0.3;"></i><br>저장된 프롬프트가 없습니다.</div>`;
+    } else {
+        for (const p of prompts) {
+            const preview = p.content.length > 60 ? p.content.substring(0, 60) + '…' : p.content;
+            html += `
+            <div class="sim-item sim-pm-item" data-prompt-id="${escapeHtml(p.id)}">
+                <div class="sim-item-prompt">${escapeHtml(p.name)}</div>
+                <div class="sim-item-meta"><span>${escapeHtml(preview)}</span></div>
+            </div>`;
+        }
+    }
+    html += `</div>`;
+    container.innerHTML = html;
+
+    const footer = document.getElementById('sim-footer');
+    if (footer) {
+        footer.classList.remove('hidden');
+        footer.innerHTML = `
+        <div class="sim-create-actions">
+            <button class="sim-btn" id="sim-pm-back"><i class="fa-solid fa-arrow-left"></i> 뒤로</button>
+            <button class="sim-btn sim-btn-primary" id="sim-pm-new"><i class="fa-solid fa-plus"></i> 새 프롬프트</button>
+        </div>`;
+    }
+
+    document.getElementById('sim-pm-back')?.addEventListener('click', goToList);
+    document.getElementById('sim-pm-new')?.addEventListener('click', () => renderPromptEditView(null));
+
+    document.getElementById('sim-pm-search')?.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase().trim();
+        container.querySelectorAll('.sim-pm-item').forEach(el => {
+            const id = el.dataset.promptId;
+            const p = prompts.find(x => x.id === id);
+            const match = !query || p?.name.toLowerCase().includes(query) || p?.content.toLowerCase().includes(query);
+            el.style.display = match ? '' : 'none';
+        });
+    });
+
+    container.querySelectorAll('.sim-pm-item').forEach(el => {
+        el.addEventListener('click', () => renderPromptEditView(el.dataset.promptId));
+    });
+}
+
+function renderPromptEditView(promptId) {
+    const container = document.getElementById('sim-content');
+    if (!container) return;
+    maybeResetContentScroll('promptEdit');
+
+    ensureSettings();
+    const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const prompt = promptId ? prompts.find(p => p.id === promptId) : null;
+
+    container.innerHTML = `
+    <div class="sim-create-view sim-create-view-v2 sim-prompt-edit-view">
+        <div class="sim-create-toolbar">
+            <button class="sim-btn" id="sim-pe-back"><i class="fa-solid fa-arrow-left"></i> 목록으로</button>
+        </div>
+        <div class="sim-card sim-card-main">
+            <h4 class="sim-card-title"><i class="fa-solid fa-bookmark"></i> ${prompt ? '프롬프트 수정' : '새 프롬프트'}</h4>
+            <div class="sim-field">
+                <label>이름</label>
+                <input type="text" class="sim-prompt-search" id="sim-pe-name"
+                    placeholder="프롬프트 이름" value="${prompt ? escapeHtml(prompt.name) : ''}" />
+            </div>
+            <div class="sim-field">
+                <label>내용</label>
+                <textarea class="sim-prompt-textarea sim-prompt-textarea-lg" id="sim-pe-content"
+                    placeholder="프롬프트 내용">${prompt ? escapeHtml(prompt.content) : ''}</textarea>
+            </div>
+        </div>
+    </div>`;
+
+    const footer = document.getElementById('sim-footer');
+    if (footer) {
+        footer.classList.remove('hidden');
+        footer.innerHTML = `
+        <div class="sim-create-actions">
+            ${prompt ? `<button class="sim-btn sim-btn-danger" id="sim-pe-delete"><i class="fa-solid fa-trash"></i> 삭제</button>` : ''}
+            <button class="sim-btn sim-btn-primary" id="sim-pe-save"><i class="fa-solid fa-floppy-disk"></i> 저장</button>
+        </div>`;
+    }
+
+    document.getElementById('sim-pe-back')?.addEventListener('click', renderPromptManagerView);
+
+    document.getElementById('sim-pe-save')?.addEventListener('click', () => {
+        const name = document.getElementById('sim-pe-name')?.value.trim();
+        const content = document.getElementById('sim-pe-content')?.value.trim();
+        if (!name || !content) { alert('이름과 내용을 모두 입력해주세요.'); return; }
+
+        ensureSettings();
+        const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
+        if (promptId) {
+            const found = prompts.find(p => p.id === promptId);
+            if (found) { found.name = name; found.content = content; }
+        } else {
+            prompts.push({ id: `prompt_${uuidv4()}`, name, content });
+        }
+        saveSettingsDebounced();
+        toastr.success('저장되었습니다.', '시뮬 매니저');
+        renderPromptManagerView();
+    });
+
+    document.getElementById('sim-pe-delete')?.addEventListener('click', () => {
+        if (!promptId || !confirm('이 프롬프트를 삭제하시겠습니까?')) return;
+        ensureSettings();
+        const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
+        const idx = prompts.findIndex(p => p.id === promptId);
+        if (idx !== -1) prompts.splice(idx, 1);
+        saveSettingsDebounced();
+        toastr.info('삭제되었습니다.', '시뮬 매니저');
+        renderPromptManagerView();
+    });
 }
 
 function goToList() {

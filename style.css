@@ -99,69 +99,66 @@
 }
 
 /* ---- List View ---- */
-.sim-list-view {}
+.sim-list-view {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
 
 .sim-new-btn {
     width: 100%;
-    padding: 12px;
-    border: 2px dashed var(--SmartThemeBorderColor, #555);
-    border-radius: 8px;
-    background-color: var(--SmartThemeBotMesBlurTintColor, #1a1a2e);
-    color: var(--SmartThemeBodyColor, #ccc);
-    filter: grayscale(0.5);
+    padding: 11px 14px;
+    border: 1px dashed var(--SmartThemeQuoteColor, #7c83ff);
+    border-radius: 10px;
+    background: var(--white30a, rgba(255, 255, 255, 0.05));
+    color: var(--SmartThemeQuoteColor, #7c83ff);
     cursor: pointer;
-    font-size: 14px;
-    transition: var(--animation-duration-2x, 0.2s);
-    margin-bottom: 12px;
+    font-size: 13px;
+    font-weight: 500;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
+    box-sizing: border-box;
 }
 
-.sim-new-btn:hover {
-    background-color: var(--white30a, rgba(255, 255, 255, 0.18));
-    border-color: var(--SmartThemeQuoteColor, #7c83ff);
-    color: var(--SmartThemeQuoteColor, #7c83ff);
-}
 
 .sim-item {
-    padding: 12px;
-    border: 1px solid var(--SmartThemeBorderColor, #333);
-    border-radius: 8px;
-    margin-bottom: 8px;
+    padding: 11px 14px;
+    border: none;
+    border-radius: 10px;
     cursor: pointer;
-    transition: var(--animation-duration-2x, 0.2s);
-    background-color: var(--SmartThemeBotMesBlurTintColor, #1a1a2e);
-    filter: grayscale(0.5);
+    transition: background 0.15s ease;
+    background: var(--SmartThemeBotMesBlurTintColor);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    box-sizing: border-box;
 }
 
-.sim-item:hover {
-    background-color: var(--white30a, rgba(255, 255, 255, 0.18));
-    border-color: var(--SmartThemeQuoteColor, #7c83ff);
-}
 
 .sim-item-prompt {
     font-size: 13px;
+    font-weight: 500;
     color: var(--SmartThemeBodyColor, #ddd);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    margin-bottom: 4px;
 }
 
 .sim-item-meta {
     font-size: 11px;
-    color: var(--SmartThemeBodyColor, #888);
+    color: var(--SmartThemeEmColor, #888);
     display: flex;
     justify-content: space-between;
 }
 
 .sim-empty {
     text-align: center;
-    color: var(--SmartThemeBodyColor, #888);
-    padding: 40px 20px;
-    font-size: 14px;
+    color: var(--SmartThemeEmColor, #888);
+    padding: 40px 16px;
+    font-size: 13px;
+    line-height: 1.6;
 }
 
 /* ---- Create View ---- */
@@ -177,57 +174,44 @@
     font-weight: 600;
 }
 
-.sim-prompt-search {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid var(--SmartThemeBorderColor, #444);
-    border-radius: 6px;
-    background: var(--SmartThemeBlurTintColor, #0d1117);
-    color: var(--SmartThemeBodyColor, #ddd);
-    font-size: 13px;
-    margin-bottom: 4px;
-}
-
-.sim-prompt-search:focus {
-    outline: none;
-    border-color: var(--SmartThemeQuoteColor, #7c83ff);
-}
-
-.sim-saved-prompts-select {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid var(--SmartThemeBorderColor, #444);
-    border-radius: 6px;
-    background: var(--SmartThemeBlurTintColor, #1a1a2e);
-    color: var(--SmartThemeBodyColor, #ddd);
-    font-size: 13px;
-}
-
+.sim-prompt-search,
+.sim-saved-prompts-select,
 .sim-prompt-textarea {
     width: 100%;
-    min-height: 120px;
-    padding: 10px;
+    padding: 9px 12px;
     border: 1px solid var(--SmartThemeBorderColor, #444);
-    border-radius: 6px;
-    background: var(--SmartThemeBlurTintColor, #0d1117);
+    border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor);
     color: var(--SmartThemeBodyColor, #ddd);
     font-size: 13px;
-    resize: vertical;
-    font-family: inherit;
-    line-height: 1.5;
+    transition: border-color 0.15s ease;
+    margin-bottom: 0;
+    box-sizing: border-box;
+    max-width: 100%;
 }
 
-.sim-prompt-textarea::placeholder {
-    color: var(--SmartThemeBodyColor, #666);
-}
-
+.sim-prompt-search:focus,
+.sim-saved-prompts-select:focus,
 .sim-prompt-textarea:focus {
     outline: none;
     border-color: var(--SmartThemeQuoteColor, #7c83ff);
 }
 
+.sim-prompt-textarea {
+    min-height: 100px;
+    resize: vertical;
+    line-height: 1.5;
+    font-family: inherit;
+}
+
+.sim-prompt-textarea::placeholder,
+.sim-prompt-search::placeholder {
+    color: var(--SmartThemeEmColor, #888);
+}
+
 .sim-prompt-textarea-lg {
-    min-height: 35vh;
+    min-height: 320px;
+    min-height: max(320px, 45svh);
 }
 
 .sim-create-options {
@@ -239,10 +223,20 @@
 .sim-checkbox-label {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--SmartThemeBodyColor, #aaa);
+    gap: 8px;
+    font-size: 13px;
+    color: var(--SmartThemeBodyColor, #ddd);
     cursor: pointer;
+    padding: 8px 4px;
+    border-radius: 6px;
+    transition: background 0.15s ease;
+    box-sizing: border-box;
+}
+
+
+.sim-checkbox-label input[type="checkbox"] {
+    accent-color: var(--SmartThemeQuoteColor, #7c83ff);
+    flex-shrink: 0;
 }
 
 .sim-checkbox-label input[type="checkbox"] {
@@ -262,14 +256,22 @@
 }
 
 .sim-btn {
-    padding: 8px 16px;
-    border: 1px solid var(--SmartThemeBorderColor, #444);
-    border-radius: 6px;
+    padding: 7px 14px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 8px;
     cursor: pointer;
     font-size: 13px;
-    transition: all 0.2s;
-    background: var(--SmartThemeBlurTintColor, #1a1a2e);
+    font-weight: 400;
+    transition: border-color 0.15s ease;
+    background: var(--white30a, rgba(255, 255, 255, 0.1));
     color: var(--SmartThemeBodyColor, #ddd);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+    box-sizing: border-box;
+    flex-shrink: 0;
 }
 
 .sim-btn:hover {
@@ -280,24 +282,25 @@
     background: transparent;
     color: var(--SmartThemeQuoteColor, #7c83ff);
     border-color: var(--SmartThemeQuoteColor, #7c83ff);
+    font-weight: 500;
 }
 
 .sim-btn-primary:hover {
-    background: rgba(124, 131, 255, 0.1);
+    background: var(--SmartThemeBotMesBlurTintColor);
 }
 
 .sim-btn-danger {
     color: #ff6b6b;
-    border-color: #ff6b6b33;
+    border-color: #ff6b6b66;
 }
 
 .sim-btn-danger:hover {
-    background: rgba(255, 107, 107, 0.1);
+    background: var(--SmartThemeBotMesBlurTintColor);
     border-color: #ff6b6b;
 }
 
 .sim-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
 }
 
@@ -305,7 +308,7 @@
 .sim-btn-sm {
     padding: 4px 10px;
     font-size: 11px;
-    border-radius: 4px;
+    border-radius: 6px;
 }
 
 /* ---- Detail View ---- */
@@ -542,7 +545,7 @@
     cursor: pointer;
     font-size: 12px;
     color: var(--SmartThemeEmColor, #999);
-    background: rgba(255, 255, 255, 0.03);
+    background: transparent;
     user-select: none;
     list-style: none;
 }
@@ -672,18 +675,15 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 14px;
+    padding: 11px 14px;
     border: 1px solid var(--SmartThemeBorderColor, #333);
-    border-radius: 8px;
+    border-radius: 10px;
     cursor: pointer;
-    transition: all 0.2s;
-    background: rgba(255, 255, 255, 0.02);
+    transition: background 0.15s ease, border-color 0.15s ease;
+    background: var(--SmartThemeBotMesBlurTintColor);
+    box-sizing: border-box;
 }
 
-.sim-global-chat-item:hover {
-    border-color: var(--SmartThemeQuoteColor, #7c83ff);
-    background: rgba(124, 131, 255, 0.06);
-}
 
 .sim-global-chat-name {
     font-size: 13px;
@@ -713,7 +713,8 @@
 .sim-global-chat-count {
     font-size: 11px;
     color: var(--SmartThemeBodyColor, #888);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--SmartThemeBlurTintColor, transparent);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
     padding: 2px 8px;
     border-radius: 10px;
 }
@@ -754,23 +755,21 @@
         height: 100%;
         max-height: 100%;
         border-radius: 0;
+        box-shadow: none;
     }
 
     .sim-header {
-        padding: 8px 12px;
-    }
-
-    .sim-header h3 {
-        font-size: 14px;
+        padding: 12px 16px;
+        padding-top: calc(12px + env(safe-area-inset-top, 0px));
     }
 
     .sim-content {
-        padding: 10px;
+        padding: 12px 14px;
     }
 
     .sim-footer {
-        padding: 10px 12px;
-        padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+        padding: 12px 14px;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     }
 
     .sim-detail-actions {
@@ -835,12 +834,13 @@
 
 .sim-dialog-box {
     background: var(--SmartThemeBlurTintColor, #1a1a2e);
-    border: 1px solid var(--SmartThemeBorderColor, #444);
-    border-radius: 10px;
-    padding: 20px;
+    border: none;
+    border-radius: 28px;
+    padding: 28px 24px 20px;
     min-width: 280px;
-    max-width: 360px;
+    max-width: 340px;
     text-align: center;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .sim-dialog-title {
@@ -915,4 +915,209 @@
 
 .sim-btn-muted {
     opacity: 0.6;
+}
+
+/* ============================================
+   Sim Manager v2 — Minimal Mobile-First
+   Telegram / Notion 스타일: 단순, 기능적, ST 변수 기반
+   ============================================ */
+
+#sim-manager-panel {
+    --sim-accent: var(--SmartThemeQuoteColor, #7c83ff);
+    --sim-surface: var(--SmartThemeBotMesBlurTintColor);
+    --sim-surface-alt: var(--SmartThemeBlurTintColor);
+    --sim-border: var(--SmartThemeBorderColor, #444);
+    --sim-label: var(--SmartThemeEmColor, #888);
+    --sim-pad: 14px;
+    --sim-gap: 10px;
+    --sim-radius: 10px;
+}
+
+/* ---- Card ---- */
+.sim-card {
+    background: var(--sim-surface);
+    border: 1px solid var(--sim-border);
+    border-radius: var(--sim-radius);
+    padding: var(--sim-pad);
+    box-sizing: border-box;
+}
+
+.sim-card + .sim-card,
+.sim-card + .sim-drawer,
+.sim-drawer + .sim-card,
+.sim-drawer + .sim-drawer {
+    margin-top: var(--sim-gap);
+}
+
+.sim-card-main {
+    border-color: var(--sim-accent);
+}
+
+.sim-card-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--sim-label);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* ---- Field ---- */
+.sim-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sim-field + .sim-field {
+    margin-top: 10px;
+}
+
+.sim-field > label {
+    font-size: 11px;
+    color: var(--sim-label);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* ---- Drawer ---- */
+.sim-drawer {
+    background: var(--sim-surface);
+    border: 1px solid var(--sim-border);
+    border-radius: var(--sim-radius);
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.sim-drawer[open] {
+    border-color: var(--sim-accent);
+}
+
+.sim-drawer > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    padding: 11px var(--sim-pad);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.sim-drawer > summary::-webkit-details-marker { display: none; }
+
+.sim-drawer-title {
+    font-size: 13px;
+    color: var(--SmartThemeBodyColor, #ddd);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sim-drawer-title > i.fa-solid {
+    color: var(--sim-accent);
+    font-size: 12px;
+    width: 14px;
+    text-align: center;
+}
+
+.sim-drawer-arrow {
+    font-size: 10px;
+    color: var(--sim-label);
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+
+.sim-drawer[open] .sim-drawer-arrow {
+    transform: rotate(180deg);
+}
+
+.sim-drawer-body {
+    padding: var(--sim-pad);
+    padding-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sim-gap);
+    border-top: 1px solid var(--sim-border);
+}
+
+/* ---- Create View v2 ---- */
+.sim-create-view-v2 {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sim-gap);
+}
+
+.sim-create-toolbar {
+    display: flex;
+    align-items: center;
+}
+
+.sim-create-toolbar .sim-btn {
+    background: transparent;
+    border-color: transparent;
+    color: var(--sim-accent);
+    padding: 6px 8px;
+    font-size: 13px;
+}
+
+.sim-create-toolbar .sim-btn:hover {
+    background: var(--sim-surface);
+    border-color: transparent;
+}
+
+/* Footer */
+.sim-footer .sim-create-actions {
+    gap: 8px;
+}
+
+.sim-footer .sim-btn {
+    padding: 8px 16px;
+    font-size: 13px;
+}
+
+.sim-create-actions .sim-btn-primary {
+    flex: 1;
+}
+
+/* card-main: 별도 override 없음 — 기본 크기 그대로 */
+
+/* ---- 프롬프트 수정 뷰 — 패널 높이를 꽉 채우는 레이아웃 ---- */
+.sim-content:has(.sim-prompt-edit-view) {
+    display: flex;
+    flex-direction: column;
+}
+
+.sim-prompt-edit-view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.sim-prompt-edit-view .sim-card-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.sim-prompt-edit-view .sim-field:last-child {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* create-view override 무효화하고 높이 꽉 채움 */
+.sim-prompt-edit-view .sim-prompt-textarea-lg {
+    flex: 1;
+    min-height: max(180px, 25svh);
+    resize: vertical;
 }
