@@ -816,6 +816,12 @@
     .sim-edit-response-textarea {
         min-height: 35vh;
     }
+
+    /* 모바일에서 키패드 열리면 공간 부족 — min-height 줄임 */
+    .sim-prompt-textarea-lg {
+        min-height: 160px;
+        min-height: max(160px, 28svh);
+    }
 }
 
 /* ---- New Chat Dialog ---- */
@@ -1115,9 +1121,9 @@
     min-height: 0;
 }
 
-/* create-view override 무효화하고 높이 꽉 채움 */
+/* create-view override 무효화하고 높이 꽉 채움 — flex:1이 크기를 잡으니 min-height는 최소치만 */
 .sim-prompt-edit-view .sim-prompt-textarea-lg {
     flex: 1;
-    min-height: max(180px, 25svh);
-    resize: vertical;
+    min-height: 60px;
+    resize: none;
 }

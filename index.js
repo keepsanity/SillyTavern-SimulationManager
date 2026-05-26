@@ -2461,7 +2461,7 @@ function renderPromptManagerView() {
     if (prompts.length === 0) {
         html += `<div class="sim-empty"><i class="fa-solid fa-bookmark" style="font-size:28px; margin-bottom:10px; opacity:0.3;"></i><br>저장된 프롬프트가 없습니다.</div>`;
     } else {
-        for (const p of prompts) {
+        for (const p of [...prompts].reverse()) {
             const preview = p.content.length > 60 ? p.content.substring(0, 60) + '…' : p.content;
             html += `
             <div class="sim-item sim-pm-item" data-prompt-id="${escapeHtml(p.id)}">
@@ -2584,7 +2584,9 @@ function goToList() {
 function fixMobileHeight() {
     const popup = document.getElementById('sim-manager-popup');
     if (popup) {
-        popup.style.height = window.innerHeight + 'px';
+        // visualViewport는 소프트 키패드가 열렸을 때도 실제 보이는 영역 높이를 반환함
+        const h = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+        popup.style.height = h + 'px';
     }
 }
 
@@ -2613,6 +2615,16 @@ window.addEventListener('resize', () => {
         fixMobileHeight();
     }
 });
+
+// 소프트 키패드 열림/닫힘 감지 (resize 이벤트가 안 뜨는 브라우저 대응)
+if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+        const popup = document.getElementById('sim-manager-popup');
+        if (popup && popup.classList.contains('active')) {
+            fixMobileHeight();
+        }
+    });
+}
 
 function openPopupToSim(simId) {
     currentSimId = simId;
