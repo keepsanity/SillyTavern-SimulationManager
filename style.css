@@ -345,6 +345,10 @@
     margin-right: 4px;
 }
 
+.sim-settings-arrow {
+    font-size: 10px;
+}
+
 .sim-prompt-toggle[open] .sim-prompt-arrow {
     transform: rotate(90deg);
 }
@@ -357,7 +361,7 @@
 }
 
 .sim-detail-prompt-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--SmartThemeQuoteColor, #7c83ff);
     font-weight: 600;
     text-transform: uppercase;
@@ -1126,4 +1130,38 @@
     flex: 1;
     min-height: 60px;
     resize: none;
+}
+
+/* ===== 시뮬 제목 (상세 뷰에서 직접 수정 가능) ===== */
+.sim-detail-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.sim-detail-title {
+    flex: 1;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--SmartThemeBodyColor, #eee);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sim-title-edit-input {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid var(--SmartThemeQuoteColor, #7c83ff);
+    border-radius: 6px;
+    background: var(--SmartThemeBlurTintColor, #0d1117);
+    color: var(--SmartThemeBodyColor, #ddd);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.sim-title-edit-input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(124, 131, 255, 0.15);
 }
