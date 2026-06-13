@@ -1232,6 +1232,9 @@ function renderDetailView() {
                 case 'part-revision':
                     showPartRevisionDialog(sim, currentIdx, partIdx, false);
                     break;
+                case 'part-copy':
+                    copyTextToClipboard(getPartText(sim, currentIdx, partIdx));
+                    break;
                 case 'part-translate':
                     translatePart(sim, currentIdx, partIdx, renderDetailView);
                     break;
@@ -1633,6 +1636,9 @@ function renderGlobalDetailView() {
                 }
                 case 'part-revision':
                     showPartRevisionDialog(sim, currentIdx, partIdx, true);
+                    break;
+                case 'part-copy':
+                    copyTextToClipboard(getPartText(sim, currentIdx, partIdx));
                     break;
                 case 'part-translate':
                     translatePart(sim, currentIdx, partIdx, renderGlobalDetailView);
@@ -2915,6 +2921,7 @@ function renderResponseParts(sim, responseIdx, currentEditPart = null, isGlobal 
         const actions = `<div class="sim-part-actions">
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-edit" data-part="${partIdx}" title="수정"><i class="fa-solid fa-pen"></i></button>
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-revision" data-part="${partIdx}" title="통제광"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
+            <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-copy" data-part="${partIdx}" title="복사"><i class="fa-solid fa-copy"></i></button>
             ${translateBtn}
             ${isCont ? `<button class="sim-btn-icon sim-btn-icon-sm sim-btn-icon-danger" data-action="part-delete" data-part="${partIdx}" title="삭제"><i class="fa-solid fa-xmark"></i></button>` : ''}
         </div>`;
@@ -2933,6 +2940,43 @@ function getFullResponseText(sim, responseIdx) {
     const base = sim.responses[responseIdx] || '';
     const conts = sim.continuations?.[String(responseIdx)] || [];
     return base + conts.join('');
+}
+
+/**
+ * 특정 파트의 텍스트 반환. 번역 보기 상태면 번역문, 아니면 원문.
+ */
+function getPartText(sim, responseIdx, partIdx) {
+    const base = sim.responses[responseIdx] || '';
+    const conts = sim.continuations?.[String(responseIdx)] || [];
+    const parts = [base, ...conts];
+    const original = parts[partIdx] || '';
+    const translated = sim.partTranslations?.[String(responseIdx)]?.[String(partIdx)];
+    return (showTranslated && translated) ? translated : original;
+}
+
+/**
+ * 텍스트를 클립보드에 복사. HTTPS/localhost 가 아닌 환경 대비 fallback 포함.
+ */
+async function copyTextToClipboard(text) {
+    if (!text) return;
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        }
+        if (typeof toastr !== 'undefined') toastr.success('복사되었습니다.', '시뮬 매니저');
+    } catch (e) {
+        console.error(DEBUG_PREFIX, 'Copy failed:', e);
+        if (typeof toastr !== 'undefined') toastr.error('복사에 실패했습니다.', '시뮬 매니저');
+    }
 }
 
 function renderResponseText(text) {
