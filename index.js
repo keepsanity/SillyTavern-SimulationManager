@@ -2802,9 +2802,10 @@ function goToList() {
 function fixMobileHeight() {
     const popup = document.getElementById('sim-manager-popup');
     if (popup) {
-        // visualViewport는 소프트 키패드가 열렸을 때도 실제 보이는 영역 높이를 반환함
-        const h = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
-        popup.style.height = h + 'px';
+        // window.innerHeight 는 주소창은 반영하되, 소프트 키패드가 떠도 줄지 않는
+        // 레이아웃 뷰포트 높이. visualViewport.height 를 쓰면 키패드만큼 모달이 줄어
+        // 푸터가 중간으로 튀어 오르므로 innerHeight 를 사용한다. (키패드는 모달 위에 겹쳐 뜸)
+        popup.style.height = window.innerHeight + 'px';
     }
 }
 
