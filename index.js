@@ -886,8 +886,8 @@ function renderDetailView() {
         titleBlock = `
             <div class="sim-detail-title-row">
                 <input type="text" class="sim-title-edit-input" id="sim-title-edit-input"
-                    value="${escapeHtml(sim.customTitle || '')}"
-                    placeholder="${escapeHtml(getSimDisplayTitle(sim))}" />
+                    value="${escapeHtml(sim.customTitle || getSimDisplayTitle(sim))}"
+                    placeholder="비우면 기본 제목으로" />
                 <button class="sim-btn-icon" id="sim-title-edit-save" title="저장"><i class="fa-solid fa-check"></i></button>
                 <button class="sim-btn-icon" id="sim-title-edit-cancel" title="취소"><i class="fa-solid fa-xmark"></i></button>
             </div>`;
@@ -954,11 +954,10 @@ function renderDetailView() {
 
     const html = `
     <div class="sim-detail-view">
-        <button class="sim-btn" id="sim-back-to-list" style="align-self:flex-start;">
-            <i class="fa-solid fa-arrow-left"></i> 목록으로
-        </button>
-
-        <div class="sim-detail-prompt-box">
+        <div class="sim-detail-topbar">
+            <button class="sim-btn sim-btn-sm" id="sim-back-to-list">
+                <i class="fa-solid fa-arrow-left"></i> 목록으로
+            </button>
             ${titleBlock}
         </div>
 
@@ -1047,7 +1046,11 @@ function renderDetailView() {
         e.stopPropagation();
         isEditingTitle = true;
         renderDetailView();
-        document.getElementById('sim-title-edit-input')?.focus();
+        const titleInput = document.getElementById('sim-title-edit-input');
+        if (titleInput) {
+            titleInput.focus();
+            titleInput.setSelectionRange(titleInput.value.length, titleInput.value.length);
+        }
     });
 
     const saveTitle = () => {

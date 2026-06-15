@@ -1133,31 +1133,53 @@
 }
 
 /* ===== 시뮬 제목 (상세 뷰에서 직접 수정 가능) ===== */
-.sim-detail-title-row {
+/* 상세 뷰 상단: 목록으로 버튼 + 제목 한 줄 */
+.sim-detail-topbar {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 2px;
+}
+
+.sim-detail-topbar #sim-back-to-list {
+    flex-shrink: 0;
+}
+
+.sim-detail-title-row {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* 제목 옆 아이콘 버튼(수정/저장/취소): 보더·배경 없이 아이콘만 */
+.sim-detail-title-row .sim-btn-icon {
+    border: none;
+    background: transparent;
+    padding: 4px;
 }
 
 .sim-detail-title {
     flex: 1;
-    font-size: 15px;
-    font-weight: 700;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 600;
     color: var(--SmartThemeBodyColor, #eee);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-align: right;
 }
 
 .sim-title-edit-input {
     flex: 1;
-    padding: 6px 10px;
+    min-width: 0;
+    padding: 5px 8px;
     border: 1px solid var(--SmartThemeQuoteColor, #7c83ff);
     border-radius: 6px;
     background: var(--SmartThemeBlurTintColor, #0d1117);
     color: var(--SmartThemeBodyColor, #ddd);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
 }
 
