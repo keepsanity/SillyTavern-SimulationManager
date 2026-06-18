@@ -171,7 +171,19 @@ const defaultSettings = {
     translationVertexAuthMode: 'express', // 'express' | 'full'
     // 기본 주입 위치 ('last_message' | 'depth_1' | 'depth_0' | 'bottom')
     defaultInjectPosition: 'last_message',
+    // 표시(브랜딩) 설정: 지팡이 버튼 + 헤더에 공통 적용
+    displayName: '시뮬레이션',
+    displayIcon: 'fa-flask',
 };
+
+// 아이콘 선택 그리드용 프리셋 (FontAwesome 6.5 solid · 귀여운 테마)
+const SIM_ICON_PRESETS = [
+    'fa-heart', 'fa-star', 'fa-wand-magic-sparkles', 'fa-moon', 'fa-clover',
+    'fa-cat', 'fa-paw', 'fa-frog', 'fa-fish', 'fa-dove',
+    'fa-otter', 'fa-hippo', 'fa-ghost', 'fa-seedling', 'fa-gem',
+    'fa-crown', 'fa-gift', 'fa-ice-cream', 'fa-cookie-bite', 'fa-cake-candles',
+    'fa-candy-cane', 'fa-lemon', 'fa-mug-hot', 'fa-flask',
+];
 
 function ensureSettings() {
     if (!extension_settings[EXTENSION_NAME]) {
@@ -187,6 +199,20 @@ function ensureSettings() {
     if (typeof s.translationProfileId !== 'string') s.translationProfileId = '';
     if (typeof s.translationVertexAuthMode !== 'string' || s.translationVertexAuthMode === '') s.translationVertexAuthMode = 'express';
     if (typeof s.defaultInjectPosition !== 'string') s.defaultInjectPosition = 'last_message';
+    if (typeof s.displayName !== 'string' || s.displayName.trim() === '') s.displayName = '시뮬레이션';
+    if (typeof s.displayIcon !== 'string' || s.displayIcon.trim() === '') s.displayIcon = 'fa-flask';
+}
+
+function getDisplayName() {
+    ensureSettings();
+    return extension_settings[EXTENSION_NAME].displayName;
+}
+
+function getDisplayIcon() {
+    ensureSettings();
+    const icon = extension_settings[EXTENSION_NAME].displayIcon;
+    // 프리셋에 없는 값이면 기본값으로 폴백 (잘못된 클래스 주입 방지)
+    return SIM_ICON_PRESETS.includes(icon) ? icon : 'fa-flask';
 }
 
 function getDefaultInjectPosition() {
@@ -519,7 +545,7 @@ function buildPopupHTML() {
     <div id="sim-manager-popup">
         <div id="sim-manager-panel">
             <div class="sim-header">
-                <h3><i class="fa-solid fa-flask"></i> 시뮬레이션 매니저</h3>
+                <h3><i class="fa-solid ${getDisplayIcon()}"></i> ${escapeHtml(getDisplayName())}</h3>
                 <div class="sim-header-actions">
                     <button class="sim-close-btn" id="sim-close"><i class="fa-solid fa-xmark"></i></button>
                 </div>
@@ -542,6 +568,12 @@ function buildSettingsHTML() {
             </div>
             <div class="inline-drawer-content">
                 <div style="padding: 8px 0;">
+                    <h4 style="margin:8px 0 4px; font-size:14px;">표시 설정</h4>
+                    <label style="font-size:12px; color:#aaa;">이름 (지팡이 버튼 · 헤더 공통)</label>
+                    <input type="text" id="sim-display-name" placeholder="시뮬레이션" maxlength="20" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;" />
+                    <label style="font-size:12px; color:#aaa;">아이콘</label>
+                    <div id="sim-icon-grid" class="sim-icon-grid"></div>
+                    <hr />
                     <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:8px;">
                         <input type="checkbox" id="sim-notifications-toggle" />
                         시뮬 완료 시 알림 표시
@@ -585,10 +617,30 @@ function buildSettingsHTML() {
 
 function buildWandButtonHTML() {
     return `
-    <div id="sim-manager-wand-btn" class="list-group-item flex-container flexGap5" title="시뮬레이션 매니저 열기">
-        <div class="fa-solid fa-flask extensionsMenuExtensionButton"></div>
-        <span>시뮬레이션</span>
+    <div id="sim-manager-wand-btn" class="list-group-item flex-container flexGap5" title="${escapeHtml(getDisplayName())} 열기">
+        <div class="fa-solid ${getDisplayIcon()} extensionsMenuExtensionButton"></div>
+        <span>${escapeHtml(getDisplayName())}</span>
     </div>`;
+}
+
+// 설정 변경 시 이미 그려진 헤더/지팡이 버튼에 이름·아이콘 즉시 반영
+function applyBranding() {
+    const name = getDisplayName();
+    const icon = getDisplayIcon();
+
+    const headerH3 = document.querySelector('#sim-manager-panel .sim-header h3');
+    if (headerH3) {
+        headerH3.innerHTML = `<i class="fa-solid ${icon}"></i> ${escapeHtml(name)}`;
+    }
+
+    const wandBtn = document.getElementById('sim-manager-wand-btn');
+    if (wandBtn) {
+        wandBtn.title = `${name} 열기`;
+        const wandIcon = wandBtn.querySelector('.extensionsMenuExtensionButton');
+        if (wandIcon) wandIcon.className = `fa-solid ${icon} extensionsMenuExtensionButton`;
+        const wandSpan = wandBtn.querySelector('span');
+        if (wandSpan) wandSpan.textContent = name;
+    }
 }
 
 // ============================================
@@ -3041,6 +3093,37 @@ function renderResponseText(text) {
     const settingsContainer = document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
     if (settingsContainer) {
         settingsContainer.insertAdjacentHTML('beforeend', buildSettingsHTML());
+
+        // 표시 설정 (이름 + 아이콘)
+        const nameInput = document.getElementById('sim-display-name');
+        if (nameInput) {
+            nameInput.value = getDisplayName();
+            nameInput.addEventListener('input', () => {
+                const v = nameInput.value.trim();
+                extension_settings[EXTENSION_NAME].displayName = v === '' ? '시뮬레이션' : v;
+                saveSettingsDebounced();
+                applyBranding();
+            });
+        }
+
+        const iconGrid = document.getElementById('sim-icon-grid');
+        if (iconGrid) {
+            const renderIconGrid = () => {
+                const current = getDisplayIcon();
+                iconGrid.innerHTML = SIM_ICON_PRESETS.map((ic) =>
+                    `<button type="button" class="sim-icon-option${ic === current ? ' selected' : ''}" data-icon="${ic}" title="${ic}"><i class="fa-solid ${ic}"></i></button>`
+                ).join('');
+            };
+            renderIconGrid();
+            iconGrid.addEventListener('click', (e) => {
+                const btn = e.target.closest('.sim-icon-option');
+                if (!btn) return;
+                extension_settings[EXTENSION_NAME].displayIcon = btn.dataset.icon;
+                saveSettingsDebounced();
+                renderIconGrid();
+                applyBranding();
+            });
+        }
 
         const toggle = document.getElementById('sim-notifications-toggle');
         if (toggle) {
