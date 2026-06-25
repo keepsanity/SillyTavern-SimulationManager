@@ -669,10 +669,20 @@
     margin-bottom: 4px;
 }
 
+.sim-global-title {
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
 .sim-global-title span {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.sim-global-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .sim-global-chat-item {
@@ -1222,4 +1232,91 @@
     border-color: var(--SmartThemeQuoteColor, #7c83ff);
     background: rgba(124, 131, 255, 0.18);
     box-shadow: 0 0 0 1px var(--SmartThemeQuoteColor, #7c83ff) inset;
+}
+
+/* ============================================
+   Multi-send (여러 방에 보내기)
+   ============================================ */
+
+.sim-multisend-allrow {
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+    padding-bottom: 6px;
+    margin-bottom: 4px;
+}
+
+.sim-multisend-list {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 6px;
+    padding: 6px;
+    margin-top: 6px;
+    background: var(--SmartThemeBlurTintColor, #0d1117);
+}
+
+.sim-multisend-item {
+    margin: 2px 0;
+}
+
+.sim-multisend-cur {
+    color: var(--SmartThemeQuoteColor, #7c83ff);
+    font-size: 11px;
+    margin-left: 4px;
+}
+
+#sim-multisend-panel {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    min-width: 290px;
+    max-width: 360px;
+    padding: 14px 16px;
+    background: var(--SmartThemeBlurTintColor, #1a1a2e);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 10px;
+    color: var(--SmartThemeBodyColor, #eee);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    z-index: 100000;
+    animation: sim-slide-in 0.3s ease;
+}
+
+.sim-ms-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    margin-bottom: 8px;
+    gap: 8px;
+}
+
+.sim-ms-head > span:first-child {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sim-ms-status {
+    font-size: 13px;
+    opacity: 0.9;
+    margin-bottom: 8px;
+    word-break: break-all;
+}
+
+.sim-ms-bar {
+    height: 6px;
+    background: var(--SmartThemeBorderColor, #444);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+#sim-ms-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--SmartThemeQuoteColor, #7c83ff);
+    transition: width 0.3s ease;
+}
+
+.sim-ms-stop {
+    width: 100%;
+    margin-top: 12px;
 }

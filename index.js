@@ -16,10 +16,21 @@ import { uuidv4 } from '../../../utils.js';
 import { getPresetManager } from '../../../preset-manager.js';
 import { oai_settings, promptManager } from '../../../openai.js';
 import { playMessageSound } from '../../../power-user.js';
-
-const EXTENSION_NAME = 'SillyTavern-SimulationManager';
-const CUSTOM_PRESET_EXT = 'SillyTavern-CustomPreset';
-const DEBUG_PREFIX = '[SimManager]';
+import {
+    EXTENSION_NAME,
+    CUSTOM_PRESET_EXT,
+    DEBUG_PREFIX,
+    SIM_ICON_PRESETS,
+    PRONOUN_MAP,
+    PRONOUN_REGEX,
+    SIM_CONTINUE_INSTRUCTION,
+    SIM_SYSTEM_INSTRUCTION,
+    SIM_POSITIONS,
+    SIM_POSITION_LABELS,
+    SIM_DIRECTIVE_KEY,
+    SIM_OOC_KEY,
+    SIM_SAVE_BTN_CLASS,
+} from './constants.js';
 
 // ============================================
 // Preset Helpers
@@ -174,16 +185,11 @@ const defaultSettings = {
     // 표시(브랜딩) 설정: 지팡이 버튼 + 헤더에 공통 적용
     displayName: '시뮬레이션',
     displayIcon: 'fa-flask',
+    // 저장된 프롬프트 불러오기 정렬 ('newest' | 'oldest' | 'name')
+    promptSortOrder: 'newest',
 };
 
-// 아이콘 선택 그리드용 프리셋 (FontAwesome 6.5 solid · 귀여운 테마)
-const SIM_ICON_PRESETS = [
-    'fa-heart', 'fa-star', 'fa-wand-magic-sparkles', 'fa-moon', 'fa-clover',
-    'fa-cat', 'fa-paw', 'fa-frog', 'fa-fish', 'fa-dove',
-    'fa-otter', 'fa-hippo', 'fa-ghost', 'fa-seedling', 'fa-gem',
-    'fa-crown', 'fa-gift', 'fa-ice-cream', 'fa-cookie-bite', 'fa-cake-candles',
-    'fa-candy-cane', 'fa-lemon', 'fa-mug-hot', 'fa-flask',
-];
+const PROMPT_SORT_ORDERS = ['newest', 'oldest', 'name'];
 
 function ensureSettings() {
     if (!extension_settings[EXTENSION_NAME]) {
@@ -201,6 +207,7 @@ function ensureSettings() {
     if (typeof s.defaultInjectPosition !== 'string') s.defaultInjectPosition = 'last_message';
     if (typeof s.displayName !== 'string' || s.displayName.trim() === '') s.displayName = '시뮬레이션';
     if (typeof s.displayIcon !== 'string' || s.displayIcon.trim() === '') s.displayIcon = 'fa-flask';
+    if (!PROMPT_SORT_ORDERS.includes(s.promptSortOrder)) s.promptSortOrder = 'newest';
 }
 
 function getDisplayName() {
@@ -223,15 +230,6 @@ function getDefaultInjectPosition() {
 // ============================================
 // Char/User Swap & Pronoun Swap
 // ============================================
-// 대명사 매핑: 'her → him' 단방향 선택 (모호성 감수)
-const PRONOUN_MAP = {
-    he: 'she', she: 'he',
-    him: 'her', her: 'him',
-    his: 'her',             // "his" → "her" (소유격 his 도 목적격 her 로 간단히 뭉개기)
-    himself: 'herself', herself: 'himself',
-};
-const PRONOUN_REGEX = /\b(he|she|him|her|his|himself|herself)\b/gi;
-
 function preserveCase(sourceWord, targetWord) {
     if (!sourceWord) return targetWord;
     if (sourceWord === sourceWord.toUpperCase() && sourceWord !== sourceWord.toLowerCase()) {
@@ -471,6 +469,122 @@ async function scanAllChatsForSimulations() {
 }
 
 // ============================================
+// Backup (내보내기) & Cleanup (캐시 정리)
+// ============================================
+
+/**
+ * 전체 시뮬을 JSON 파일로 내보내기 (다운로드).
+ * 채팅 파일은 건드리지 않음 — 스캔(읽기) 후 globalSimulations 캐시를 직렬화.
+ * @returns {Promise<number>} 내보낸 시뮬 개수 (실패 시 -1)
+ */
+async function exportSimBackup() {
+    try {
+        await scanAllChatsForSimulations(); // 최신 데이터 보장
+        ensureSettings();
+        const data = extension_settings[EXTENSION_NAME].globalSimulations || {};
+        const simCount = Object.values(data).reduce((n, d) => n + (d?.simulations?.length || 0), 0);
+
+        const payload = {
+            type: 'sim-manager-backup',
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            chatCount: Object.keys(data).length,
+            simCount,
+            globalSimulations: structuredClone(data),
+        };
+
+        const json = JSON.stringify(payload, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        a.href = url;
+        a.download = `sim-manager-backup_${stamp}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        return simCount;
+    } catch (e) {
+        console.error(DEBUG_PREFIX, 'Export failed:', e);
+        return -1;
+    }
+}
+
+/**
+ * 현재 존재하는 채팅방 키 집합 수집 (채팅 내용은 안 읽고 목록만).
+ * @returns {Promise<{keys: Set<string>, complete: boolean}>}
+ *   complete=false 면 일부 캐릭터 목록을 못 읽은 것 → '유령 항목' 정리는 보류해야 안전.
+ */
+async function collectExistingChatKeys() {
+    const keys = new Set();
+    let complete = true;
+    const context = getContext();
+    const headers = getRequestHeaders();
+
+    const cur = getCurrentChatKey();
+    if (cur) keys.add(cur);
+
+    for (const char of (context.characters || [])) {
+        if (!char?.avatar) continue;
+        try {
+            const res = await fetch('/api/characters/chats', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ avatar_url: char.avatar }),
+            });
+            if (!res.ok) { complete = false; continue; }
+            const files = Object.values(await res.json());
+            for (const f of files) {
+                const fn = f?.file_name;
+                if (fn) keys.add(`${char.name}_${fn.replace('.jsonl', '')}`);
+            }
+        } catch (e) {
+            complete = false;
+        }
+    }
+
+    for (const group of (context.groups || [])) {
+        if (group?.id) keys.add(`group_${group.id}`);
+    }
+
+    return { keys, complete };
+}
+
+/**
+ * 모아보기 캐시(globalSimulations) 정리.
+ * - 빈 항목(시뮬 0개) 제거: 항상 안전
+ * - 삭제된 채팅의 유령 항목 제거: 채팅 목록을 모두 성공적으로 읽었을 때만
+ * 채팅 파일은 건드리지 않음 (설정 캐시만 수정).
+ * @returns {Promise<{removedEmpty: number, removedGone: number, prunedGone: boolean}>}
+ */
+async function cleanupGlobalCache() {
+    ensureSettings();
+    const global = extension_settings[EXTENSION_NAME].globalSimulations || {};
+    const { keys, complete } = await collectExistingChatKeys();
+
+    let removedEmpty = 0;
+    let removedGone = 0;
+
+    for (const key of Object.keys(global)) {
+        const entry = global[key];
+        const empty = !entry?.simulations || entry.simulations.length === 0;
+        if (empty) {
+            delete global[key];
+            removedEmpty++;
+            continue;
+        }
+        if (complete && !keys.has(key)) {
+            delete global[key];
+            removedGone++;
+        }
+    }
+
+    saveSettingsDebounced();
+    return { removedEmpty, removedGone, prunedGone: complete };
+}
+
+// ============================================
 // State
 // ============================================
 let currentView = 'list'; // 'list' | 'create' | 'detail' | 'globalList' | 'globalSimList' | 'globalDetail'
@@ -495,6 +609,16 @@ let translatingPartIdx = null; // 현재 번역 중인 파트 인덱스
 // Generation state (생성 중단)
 let simGenerating = false;  // 시뮬 생성(최초/재생성/이어쓰기)이 진행 중인지
 let simAborted = false;     // 사용자가 '중단'을 눌러 abort 했는지
+
+// 다중 전송(여러 채팅방) 상태
+let multiSendRunning = false;       // 다중 전송 루프 진행 중
+let multiSendShouldStop = false;    // 중지 버튼 눌림
+let multiSendTargetsCache = [];     // 생성 화면에 표시 중인 대상 목록 (캐시)
+let multiSendSelKeys = new Set();   // 선택된 대상 키 (type:id)
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 /**
  * 시뮬 생성을 중단. generateQuietPrompt 는 GENERATION_STOPPED 이벤트를 듣고 abort 한다.
@@ -703,6 +827,31 @@ function renderListView() {
     });
 }
 
+/**
+ * '저장된 프롬프트 불러오기' 드롭다운 옵션 HTML 생성.
+ * 검색어로 필터 + 설정된 정렬(최신/오래된/이름) 적용.
+ */
+function buildLoadPromptOptions(query = '') {
+    ensureSettings();
+    const s = extension_settings[EXTENSION_NAME];
+    const q = (query || '').toLowerCase().trim();
+    let list = s.savedPrompts.filter(p => !q || p.name.toLowerCase().includes(q) || p.content.toLowerCase().includes(q));
+
+    const order = s.promptSortOrder || 'newest';
+    if (order === 'newest') {
+        list = list.slice().reverse();          // 배열 순서 = 저장순 → 뒤집으면 최신순
+    } else if (order === 'name') {
+        list = list.slice().sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+    }
+    // 'oldest' = 원래 배열 순서 그대로
+
+    let options = `<option value="">-- 직접 입력 --</option>`;
+    for (const p of list) {
+        options += `<option value="${p.id}">${escapeHtml(p.name)}</option>`;
+    }
+    return options;
+}
+
 function renderCreateView() {
     const container = document.getElementById('sim-content');
     if (!container) return;
@@ -711,10 +860,7 @@ function renderCreateView() {
     ensureSettings();
     const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
 
-    let selectOptions = `<option value="">-- 직접 입력 --</option>`;
-    for (const p of savedPrompts) {
-        selectOptions += `<option value="${p.id}">${escapeHtml(p.name)}</option>`;
-    }
+    const selectOptions = buildLoadPromptOptions();
 
     // 프리셋 셀렉트 옵션 (현재 프리셋이 기본 선택)
     const currentPresetName = getCurrentPresetName();
@@ -765,6 +911,11 @@ function renderCreateView() {
             </summary>
             <div class="sim-drawer-body">
                 <input type="text" class="sim-prompt-search" id="sim-prompt-search" placeholder="프롬프트 검색 (제목/내용)" />
+                <select class="sim-saved-prompts-select sim-prompt-sort" id="sim-prompt-sort">
+                    <option value="newest">최신순</option>
+                    <option value="oldest">오래된순</option>
+                    <option value="name">이름순</option>
+                </select>
                 <select class="sim-saved-prompts-select" id="sim-load-prompt">
                     ${selectOptions}
                 </select>
@@ -823,6 +974,22 @@ function renderCreateView() {
                 </label>
             </div>
         </details>
+
+        <details class="sim-drawer" id="sim-multisend-drawer">
+            <summary>
+                <span class="sim-drawer-title"><i class="fa-solid fa-tower-broadcast"></i> 여러 방에 보내기</span>
+                <i class="fa-solid fa-chevron-down sim-drawer-arrow"></i>
+            </summary>
+            <div class="sim-drawer-body">
+                <span class="sim-create-hint">현재 방은 기본 포함됩니다. 다른 방을 추가로 선택하면 함께 전송하고, 현재 방을 빼려면 (현재) 항목 체크를 해제하세요. 선택한 방마다 차례로 열어 같은 시뮬을 생성·저장하며, 끝나면 원래 방으로 돌아옵니다.</span>
+                <input type="text" class="sim-prompt-search" id="sim-multisend-search" placeholder="채팅방 검색 (이름)" />
+                <label class="sim-checkbox-label sim-multisend-allrow">
+                    <input type="checkbox" id="sim-multisend-all" />
+                    <span>보이는 항목 전체 선택</span>
+                </label>
+                <div id="sim-multisend-list" class="sim-multisend-list"></div>
+            </div>
+        </details>
     </div>`;
 
     container.innerHTML = html;
@@ -840,18 +1007,24 @@ function renderCreateView() {
     document.getElementById('sim-back-to-list')?.addEventListener('click', goToList);
     document.getElementById('sim-cancel-create')?.addEventListener('click', goToList);
 
-    document.getElementById('sim-prompt-search')?.addEventListener('input', (e) => {
-        const query = e.target.value.toLowerCase().trim();
+    const rebuildLoadPrompt = () => {
         const select = document.getElementById('sim-load-prompt');
         if (!select) return;
-        let options = `<option value="">-- 직접 입력 --</option>`;
-        for (const p of savedPrompts) {
-            if (!query || p.name.toLowerCase().includes(query) || p.content.toLowerCase().includes(query)) {
-                options += `<option value="${p.id}">${escapeHtml(p.name)}</option>`;
-            }
-        }
-        select.innerHTML = options;
-    });
+        const query = document.getElementById('sim-prompt-search')?.value || '';
+        select.innerHTML = buildLoadPromptOptions(query);
+    };
+
+    document.getElementById('sim-prompt-search')?.addEventListener('input', rebuildLoadPrompt);
+
+    const sortSelect = document.getElementById('sim-prompt-sort');
+    if (sortSelect) {
+        sortSelect.value = extension_settings[EXTENSION_NAME].promptSortOrder || 'newest';
+        sortSelect.addEventListener('change', () => {
+            extension_settings[EXTENSION_NAME].promptSortOrder = PROMPT_SORT_ORDERS.includes(sortSelect.value) ? sortSelect.value : 'newest';
+            saveSettingsDebounced();
+            rebuildLoadPrompt();
+        });
+    }
 
     document.getElementById('sim-load-prompt')?.addEventListener('change', (e) => {
         const promptId = e.target.value;
@@ -869,6 +1042,8 @@ function renderCreateView() {
     });
 
     document.getElementById('sim-send-btn')?.addEventListener('click', handleSendSimulation);
+
+    setupMultiSendDrawer();
 
     // 프리셋 / 토글 프리셋 셀렉트 초기화 & 연동
     const presetSelect = document.getElementById('sim-preset-select');
@@ -1382,12 +1557,25 @@ function renderGlobalListView() {
 
     ensureSettings();
     const global = extension_settings[EXTENSION_NAME].globalSimulations;
-    const chatKeys = Object.keys(global);
+    // 각 방의 가장 최근 시뮬 createdAt 기준 최신순 정렬
+    const latestCreatedAt = (data) => {
+        const sims = data?.simulations || [];
+        let m = 0;
+        for (const s of sims) {
+            if (typeof s.createdAt === 'number' && s.createdAt > m) m = s.createdAt;
+        }
+        return m;
+    };
+    const chatKeys = Object.keys(global).sort((a, b) => latestCreatedAt(global[b]) - latestCreatedAt(global[a]));
 
     let html = `<div class="sim-global-list-view">`;
     html += `<div class="sim-global-title">
         <span><i class="fa-solid fa-layer-group"></i> 전체 시뮬레이션 모아보기</span>
-        <button class="sim-btn sim-btn-sm" id="sim-global-rescan" title="다시 스캔"><i class="fa-solid fa-arrows-rotate"></i> 새로고침</button>
+        <span class="sim-global-actions">
+            <button class="sim-btn sim-btn-sm" id="sim-global-export" title="전체 시뮬을 JSON 파일로 백업"><i class="fa-solid fa-download"></i> 백업</button>
+            <button class="sim-btn sim-btn-sm" id="sim-global-cleanup" title="삭제된 채팅·빈 항목 정리"><i class="fa-solid fa-broom"></i> 정리</button>
+            <button class="sim-btn sim-btn-sm" id="sim-global-rescan" title="다시 스캔"><i class="fa-solid fa-arrows-rotate"></i> 새로고침</button>
+        </span>
     </div>`;
 
     if (chatKeys.length === 0) {
@@ -1426,6 +1614,42 @@ function renderGlobalListView() {
         const result = await scanAllChatsForSimulations();
         if (result >= 0 && typeof toastr !== 'undefined') {
             toastr.info(`${result}개의 시뮬레이션을 찾았습니다.`, '시뮬 매니저');
+        }
+        renderGlobalListView();
+    });
+
+    // 백업(내보내기) 버튼
+    document.getElementById('sim-global-export')?.addEventListener('click', async () => {
+        const btn = document.getElementById('sim-global-export');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 백업 중...';
+        }
+        const count = await exportSimBackup();
+        if (typeof toastr !== 'undefined') {
+            if (count >= 0) toastr.success(`${count}개 시뮬을 백업 파일로 내보냈습니다.`, '시뮬 매니저');
+            else toastr.error('백업에 실패했습니다.', '시뮬 매니저');
+        }
+        renderGlobalListView();
+    });
+
+    // 정리(캐시 클린업) 버튼
+    document.getElementById('sim-global-cleanup')?.addEventListener('click', async () => {
+        const btn = document.getElementById('sim-global-cleanup');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 정리 중...';
+        }
+        const { removedEmpty, removedGone, prunedGone } = await cleanupGlobalCache();
+        if (typeof toastr !== 'undefined') {
+            const total = removedEmpty + removedGone;
+            if (total === 0) {
+                toastr.info('정리할 항목이 없습니다.', '시뮬 매니저');
+            } else {
+                let msg = `${total}개 항목 정리됨 (빈 항목 ${removedEmpty}, 삭제된 채팅 ${removedGone})`;
+                if (!prunedGone) msg += ' · 일부 채팅 목록을 못 읽어 유령 항목 정리는 건너뜀';
+                toastr.success(msg, '시뮬 매니저');
+            }
         }
         renderGlobalListView();
     });
@@ -1894,6 +2118,26 @@ async function handleSendSimulation() {
     const matchedPrompt = savedPrompts.find(p => p.content === rawPrompt);
     const promptName = customTitle || (matchedPrompt ? matchedPrompt.name : '');
 
+    // 다중 전송 분기: 현재 방 외에 다른 방이 하나라도 포함됐을 때만 다중 흐름.
+    // (드로어 미사용 = 현재 방만 선택된 상태 → 기존 단일 인터랙티브 흐름 유지)
+    const multiTargets = getSelectedMultiSendTargets();
+    const curLoc = captureCurrentLocation();
+    const onlyCurrent = multiTargets.length === 1 && sameLocation(multiTargets[0], curLoc);
+    if (multiTargets.length > 0 && !onlyCurrent) {
+        await handleMultiSendSimulation(multiTargets, {
+            rawPrompt,
+            promptName,
+            customTitle,
+            noSavePrompt,
+            loadedPromptId,
+            chosenPresetName,
+            chosenTogglePresetName,
+            chosenPosition,
+            chosenSwapCharUser,
+            chosenSwapPronouns,
+        });
+        return;
+    }
 
     const sims = getSimulations();
     let sim = null;
@@ -1994,6 +2238,377 @@ async function handleSendSimulation() {
     }
 }
 
+// ============================================
+// 다중 전송 (여러 채팅방)
+// ============================================
+
+/** 현재 위치(캐릭터/그룹) 키. 대상 목록에서 '현재' 표시용. */
+function currentLocationKey() {
+    try {
+        const ctx = getContext();
+        if (ctx.groupId) return `group:${ctx.groupId}`;
+        if (ctx.characterId !== undefined && ctx.characterId !== null) return `char:${ctx.characterId}`;
+    } catch { /* ignore */ }
+    return null;
+}
+
+/** 복귀용으로 현재 위치를 target 형태로 캡처. */
+function captureCurrentLocation() {
+    try {
+        const ctx = getContext();
+        if (ctx.groupId) {
+            const g = (ctx.groups || []).find(x => String(x.id) === String(ctx.groupId));
+            return { type: 'group', id: ctx.groupId, name: g?.name || '그룹', avatar: '' };
+        }
+        const idx = ctx.characterId;
+        if (idx !== undefined && idx !== null) {
+            const c = (ctx.characters || [])[idx];
+            return { type: 'char', id: idx, name: c?.name || '캐릭터', avatar: c?.avatar || '' };
+        }
+    } catch { /* ignore */ }
+    return null;
+}
+
+/** 전송 대상 후보 목록 (캐릭터 + 그룹). 현재 방은 isCurrent 표시. */
+function getMultiSendTargets() {
+    const targets = [];
+    try {
+        const ctx = getContext();
+        (ctx.characters || []).forEach((char, index) => {
+            if (char && char.name) {
+                targets.push({ type: 'char', id: index, name: char.name, avatar: char.avatar || '', isCurrent: false });
+            }
+        });
+        (ctx.groups || []).forEach((g) => {
+            if (g && g.name) {
+                targets.push({ type: 'group', id: g.id, name: g.name, avatar: '', isCurrent: false });
+            }
+        });
+        const curKey = currentLocationKey();
+        for (const t of targets) {
+            if (`${t.type}:${t.id}` === curKey) t.isCurrent = true;
+        }
+    } catch (e) {
+        console.error(DEBUG_PREFIX, 'getMultiSendTargets failed:', e);
+    }
+    return targets;
+}
+
+/** 현재 활성 채팅이 target 과 동일한지. */
+function isOnTarget(target) {
+    try {
+        const ctx = getContext();
+        if (target.type === 'group') return String(ctx.groupId || '') === String(target.id);
+        if (ctx.groupId) return false;
+        const idx = ctx.characterId;
+        if (idx === undefined || idx === null) return false;
+        const cur = (ctx.characters || [])[idx];
+        if (!cur) return false;
+        return target.avatar ? cur.avatar === target.avatar : cur.name === target.name;
+    } catch {
+        return false;
+    }
+}
+
+/** 다음 CHAT_CHANGED 이벤트(또는 타임아웃)를 기다린다. */
+function waitForChatChanged(timeout = 20000) {
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = (ok) => {
+            if (done) return;
+            done = true;
+            eventSource.removeListener(event_types.CHAT_CHANGED, handler);
+            resolve(ok);
+        };
+        const handler = () => finish(true);
+        eventSource.on(event_types.CHAT_CHANGED, handler);
+        setTimeout(() => finish(false), timeout);
+    });
+}
+
+/** 지정 채팅방으로 전환하고 로드 완료까지 대기. */
+async function switchToTargetChat(target) {
+    const ctx = getContext();
+    const loaded = waitForChatChanged(20000);
+    if (target.type === 'group') {
+        const g = (ctx.groups || []).find(x => String(x.id) === String(target.id));
+        if (!g) throw new Error(`그룹을 찾을 수 없습니다: ${target.name}`);
+        await ctx.openGroupChat(g.id, g.chat_id);
+    } else {
+        // 캐릭터 인덱스는 avatar 로 재확인 (목록 순서 변동 대비)
+        let idx = target.id;
+        if (target.avatar) {
+            const found = (ctx.characters || []).findIndex(c => c.avatar === target.avatar);
+            if (found >= 0) idx = found;
+        }
+        if (idx === undefined || idx === null || idx < 0) throw new Error(`캐릭터를 찾을 수 없습니다: ${target.name}`);
+        await ctx.selectCharacterById(idx);
+    }
+    await loaded;
+    await sleep(500); // 메타데이터/연결 settle
+}
+
+/** 생성 화면의 대상 체크박스 UI 구성. */
+function setupMultiSendDrawer() {
+    const listEl = document.getElementById('sim-multisend-list');
+    if (!listEl) return;
+
+    multiSendTargetsCache = getMultiSendTargets();
+    multiSendSelKeys = new Set();
+
+    const keyOf = (t) => `${t.type}:${t.id}`;
+
+    // 현재 방은 기본 선택 (다른 방을 추가로 고르면 현재 방도 함께 전송됨).
+    // 현재 방만 선택된 상태면 분기에서 단일 흐름으로 처리되므로 기본 동작은 그대로.
+    const curTarget = multiSendTargetsCache.find(t => t.isCurrent);
+    if (curTarget) multiSendSelKeys.add(keyOf(curTarget));
+
+    const renderList = (query = '') => {
+        const q = query.trim().toLowerCase();
+        const items = multiSendTargetsCache.filter(t => !q || t.name.toLowerCase().includes(q));
+        if (items.length === 0) {
+            listEl.innerHTML = '<div class="sim-empty" style="padding:10px;">검색 결과가 없습니다.</div>';
+            return;
+        }
+        listEl.innerHTML = items.map(t => {
+            const k = keyOf(t);
+            const checked = multiSendSelKeys.has(k) ? ' checked' : '';
+            const cur = t.isCurrent ? ' <span class="sim-multisend-cur">(현재)</span>' : '';
+            const icon = t.type === 'group' ? '👥 ' : '';
+            return `<label class="sim-checkbox-label sim-multisend-item">
+                <input type="checkbox" class="sim-multisend-cb" data-key="${escapeHtml(k)}"${checked} />
+                <span>${icon}${escapeHtml(t.name)}${cur}</span>
+            </label>`;
+        }).join('');
+    };
+
+    renderList();
+
+    document.getElementById('sim-multisend-search')?.addEventListener('input', (e) => {
+        renderList(e.target.value);
+    });
+
+    document.getElementById('sim-multisend-all')?.addEventListener('change', (e) => {
+        const on = e.target.checked;
+        listEl.querySelectorAll('.sim-multisend-cb').forEach(cb => {
+            cb.checked = on;
+            if (on) multiSendSelKeys.add(cb.dataset.key);
+            else multiSendSelKeys.delete(cb.dataset.key);
+        });
+    });
+
+    listEl.addEventListener('change', (e) => {
+        const cb = e.target.closest('.sim-multisend-cb');
+        if (!cb) return;
+        if (cb.checked) multiSendSelKeys.add(cb.dataset.key);
+        else multiSendSelKeys.delete(cb.dataset.key);
+    });
+}
+
+/** 두 위치(target 형태)가 같은 채팅방인지. */
+function sameLocation(a, b) {
+    if (!a || !b || a.type !== b.type) return false;
+    if (a.type === 'group') return String(a.id) === String(b.id);
+    if (a.avatar && b.avatar) return a.avatar === b.avatar;
+    return String(a.id) === String(b.id);
+}
+
+/** 현재 선택된 대상 목록 반환 (검색 필터로 가려진 선택도 유지). */
+function getSelectedMultiSendTargets() {
+    if (!multiSendSelKeys || multiSendSelKeys.size === 0) return [];
+    return multiSendTargetsCache.filter(t => multiSendSelKeys.has(`${t.type}:${t.id}`));
+}
+
+/** 프롬프트 자동 저장(단일 흐름과 동일 규칙) — 다중 전송 시 1회만. */
+function maybeAutoSavePrompt(opts) {
+    if (opts.noSavePrompt) return;
+    ensureSettings();
+    const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const loadedPrompt = opts.loadedPromptId ? savedPrompts.find(p => p.id === opts.loadedPromptId) : null;
+    const titleChanged = opts.customTitle && loadedPrompt && opts.customTitle !== loadedPrompt.name;
+    const contentChanged = !savedPrompts.some(p => p.content === opts.rawPrompt);
+    if (titleChanged || contentChanged) {
+        savedPrompts.push({
+            id: `prompt_${uuidv4()}`,
+            name: opts.customTitle || (opts.rawPrompt.length > 20 ? opts.rawPrompt.substring(0, 20) + '...' : opts.rawPrompt),
+            content: opts.rawPrompt,
+        });
+        saveSettingsDebounced();
+        renderSettingsSavedPrompts();
+    }
+}
+
+// ---- 진행 패널 ----
+function showMultiSendPanel(total) {
+    hideMultiSendPanel();
+    const html = `
+    <div id="sim-multisend-panel">
+        <div class="sim-ms-head">
+            <span><i class="fa-solid fa-tower-broadcast"></i> 다중 시뮬 전송</span>
+            <span id="sim-ms-count">0/${total}</span>
+        </div>
+        <div id="sim-ms-status" class="sim-ms-status">준비 중...</div>
+        <div class="sim-ms-bar"><div id="sim-ms-bar-fill"></div></div>
+        <button id="sim-ms-stop" class="sim-btn sim-btn-danger sim-ms-stop"><i class="fa-solid fa-stop"></i> 중지</button>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+    document.getElementById('sim-ms-stop')?.addEventListener('click', () => {
+        multiSendShouldStop = true;
+        try { stopSimGeneration(); } catch (e) { /* ignore */ }
+        const s = document.getElementById('sim-ms-status');
+        if (s) s.textContent = '중지 중... (현재 방 마무리)';
+    });
+}
+
+function updateMultiSendPanel(idx, total, name, status) {
+    const c = document.getElementById('sim-ms-count');
+    if (c) c.textContent = `${Math.min(idx + 1, total)}/${total}`;
+    const s = document.getElementById('sim-ms-status');
+    if (s) s.textContent = `${name}: ${status}`;
+    const f = document.getElementById('sim-ms-bar-fill');
+    if (f) f.style.width = `${total ? (idx / total * 100) : 0}%`;
+}
+
+function hideMultiSendPanel() {
+    document.getElementById('sim-multisend-panel')?.remove();
+}
+
+/**
+ * 선택한 여러 채팅방에 같은 시뮬을 순차 생성.
+ * 각 방을 열어 → 시뮬 생성 → 그 방 메타데이터에 저장(즉시 flush) → 다음 방.
+ */
+async function handleMultiSendSimulation(targets, opts) {
+    if (multiSendRunning || simGenerating) {
+        if (typeof toastr !== 'undefined') toastr.warning('이미 생성이 진행 중입니다.', '시뮬 매니저');
+        return;
+    }
+
+    maybeAutoSavePrompt(opts);
+
+    multiSendRunning = true;
+    multiSendShouldStop = false;
+    simGenerating = true; // 다른 시뮬 동작 차단
+    simAborted = false;
+
+    const origin = captureCurrentLocation();
+    closePopup();
+    showMultiSendPanel(targets.length);
+
+    let success = 0;
+    let fail = 0;
+    let originSimId = null; // 현재 방이 대상에 포함됐으면, 그 방에서 만든 시뮬 id
+
+    for (let i = 0; i < targets.length; i++) {
+        if (multiSendShouldStop) break;
+        const target = targets[i];
+
+        try {
+            updateMultiSendPanel(i, targets.length, target.name, '채팅방 여는 중...');
+            if (!isOnTarget(target)) {
+                await switchToTargetChat(target);
+            }
+            if (!isOnTarget(target)) {
+                throw new Error('채팅방 전환 확인 실패');
+            }
+
+            if (multiSendShouldStop) break;
+            updateMultiSendPanel(i, targets.length, target.name, '시뮬 생성 중...');
+
+            // {{char}}/{{user}} 가 이 방 기준으로 치환되도록 전환 후 재계산
+            const resolved = substituteParams(applySwap(opts.rawPrompt, opts.chosenSwapCharUser, opts.chosenSwapPronouns));
+
+            const sim = {
+                id: `sim_${uuidv4()}`,
+                promptText: opts.rawPrompt,
+                promptName: opts.promptName,
+                responses: [],
+                currentIndex: 0,
+                createdAt: Date.now(),
+                presetName: opts.chosenPresetName,
+                togglePresetName: opts.chosenTogglePresetName,
+                injectPosition: opts.chosenPosition,
+                swapCharUser: opts.chosenSwapCharUser,
+                swapPronouns: opts.chosenSwapPronouns,
+            };
+
+            const rawResponse = await withSimulationPreset(opts.chosenPresetName, opts.chosenTogglePresetName, () =>
+                runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolved, sim.injectPosition)
+            );
+
+            if (simAborted || (multiSendShouldStop && !rawResponse)) {
+                // 생성 도중 중단 — 빈 시뮬 저장하지 않음
+                break;
+            }
+
+            // 생성 중 예기치 않게 방이 바뀌었으면 다시 맞춤
+            if (!isOnTarget(target)) {
+                await switchToTargetChat(target);
+                if (!isOnTarget(target)) throw new Error('생성 후 채팅방 복귀 실패');
+            }
+
+            sim.responses.push(rawResponse);
+            sim.currentIndex = 0;
+
+            const sims = getSimulations(); // 이 방의 메타데이터
+            sims.push(sim);
+
+            // 다음 방으로 넘어가기 전 즉시 저장 (debounce 미flush 방지)
+            try { await getContext().saveChat(); } catch (e) { console.error(DEBUG_PREFIX, 'saveChat failed:', e); }
+            syncToGlobal();
+
+            // 현재(원래) 방이 대상이면, 끝나고 디테일 뷰로 열어줄 시뮬 id 기억
+            if (origin && sameLocation(target, origin)) {
+                originSimId = sim.id;
+            }
+
+            success++;
+            updateMultiSendPanel(i, targets.length, target.name, '완료 ✓');
+        } catch (err) {
+            console.error(DEBUG_PREFIX, 'multi-send failed for', target.name, err);
+            fail++;
+            updateMultiSendPanel(i, targets.length, target.name, '실패: ' + (err?.message || ''));
+            await sleep(600);
+        }
+
+        if (i < targets.length - 1 && !multiSendShouldStop) await sleep(800);
+    }
+
+    // 원래 방으로 복귀
+    try {
+        if (origin && !isOnTarget(origin)) {
+            updateMultiSendPanel(targets.length, targets.length, origin.name, '원래 방으로 복귀 중...');
+            await switchToTargetChat(origin);
+        }
+    } catch (e) {
+        console.error(DEBUG_PREFIX, 'restore origin failed:', e);
+    }
+
+    simGenerating = false;
+    multiSendRunning = false;
+    multiSendShouldStop = false;
+    simAborted = false;
+    hideMultiSendPanel();
+
+    // 현재 방이 대상에 포함됐고 복귀에 성공했으면, 그 방 시뮬을 디테일 뷰로 자동 오픈
+    if (originSimId && origin && isOnTarget(origin)) {
+        try {
+            openPopupToSim(originSimId);
+        } catch (e) {
+            console.error(DEBUG_PREFIX, 'open detail after multi-send failed:', e);
+        }
+    }
+
+    if (typeof toastr !== 'undefined') {
+        if (success > 0 && fail === 0) {
+            toastr.success(`다중 전송 완료! ${success}개 방 모두 성공`, '시뮬 매니저');
+        } else if (success > 0) {
+            toastr.warning(`다중 전송 완료. 성공 ${success} / 실패 ${fail}`, '시뮬 매니저');
+        } else {
+            toastr.error(`다중 전송 실패. 성공 0 / 실패 ${fail}`, '시뮬 매니저');
+        }
+    }
+}
+
 async function handleRegenerateSimulation(sim) {
     if (simGenerating) return;
     const resolvedPrompt = substituteParams(getEffectivePromptText(sim));
@@ -2087,39 +2702,6 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
         }
     }
 }
-
-const SIM_CONTINUE_INSTRUCTION = `<simulation_continue_directive priority="critical">
-<rule>This is a CONTINUATION of a previous simulation response — NOT a regular roleplay turn.</rule>
-<rule>Write the NEXT content that comes AFTER the existing response. The user wants to see WHAT HAPPENS NEXT.</rule>
-<rule>Do NOT refine, rewrite, polish, or expand the existing response. The existing response is already finalized — move FORWARD from it.</rule>
-<rule>Continue from EXACTLY where the previous response ended. Do NOT repeat any part of the existing response.</rule>
-<rule>Stay focused on the ORIGINAL simulation request. Do NOT drift into generic roleplay narration or wrap-up prose.</rule>
-<rule>Maintain the same tone, style, and context as the existing response.</rule>
-<rule>Output ONLY the continuation text. Do NOT include any meta-commentary or acknowledgment.</rule>
-</simulation_continue_directive>`;
-
-const SIM_SYSTEM_INSTRUCTION = `<simulation_directive priority="critical">
-<rule>This is a STANDALONE SIMULATION requested by the user.</rule>
-<rule>FOLLOW OOC REQUEST ONLY. Generate a response based ONLY on the user's simulation request below.</rule>
-<rule>Stay in character and maintain the established setting, personality, and tone.</rule>
-</simulation_directive>`;
-// ============================================
-// Sim Inject Position
-// ============================================
-const SIM_POSITIONS = {
-    LAST_MESSAGE: 'last_message', // chat 의 마지막 user 메시지 자리 (ghost push) — 기본
-    DEPTH_1: 'depth_1',           // IN_CHAT depth 1 USER — 진짜 마지막 메시지 앞
-    DEPTH_0: 'depth_0',           // IN_CHAT depth 0 USER — 진짜 마지막 메시지 뒤 (history 안)
-    BOTTOM: 'bottom',             // quietPrompt — </history> 밖, 프롬프트 맨 끝
-};
-const SIM_POSITION_LABELS = {
-    [SIM_POSITIONS.LAST_MESSAGE]: '마지막 메시지 (기본)',
-    [SIM_POSITIONS.DEPTH_1]: '깊이 1',
-    [SIM_POSITIONS.DEPTH_0]: '깊이 0',
-    [SIM_POSITIONS.BOTTOM]: '맨 밑',
-};
-const SIM_DIRECTIVE_KEY = 'sim_manager_directive';
-const SIM_OOC_KEY = 'sim_manager_ooc';
 
 function normalizeSimPosition(v) {
     return Object.values(SIM_POSITIONS).includes(v) ? v : SIM_POSITIONS.LAST_MESSAGE;
@@ -2437,7 +3019,6 @@ async function insertSimIntoCurrentChat(promptText, responseText) {
 // ============================================
 // Capture: 채팅 메시지 → 시뮬 항목으로 저장
 // ============================================
-const SIM_SAVE_BTN_CLASS = 'sim-save-to-mgr';
 
 /**
  * 채팅 메시지 하나를 현재 챗의 시뮬 목록에 새 항목으로 저장.
