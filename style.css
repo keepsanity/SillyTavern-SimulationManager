@@ -42,7 +42,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
     background: var(--SmartThemeBlurTintColor, #16213e);
     flex-shrink: 0;
@@ -50,27 +50,27 @@
 
 .sim-header h3 {
     margin: 0;
-    font-size: 16px;
+    font-size: 13px;
     color: var(--SmartThemeBodyColor, #eee);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
 }
 
 .sim-header-actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
 }
 
 .sim-close-btn {
     cursor: pointer;
-    font-size: 18px;
+    font-size: 14px;
     color: var(--SmartThemeBodyColor, #aaa);
     transition: color 0.2s;
     background: none;
     border: none;
-    padding: 4px;
+    padding: 2px;
 }
 
 .sim-close-btn:hover {
@@ -88,10 +88,10 @@
 /* ---- Footer (fixed at bottom) ---- */
 .sim-footer {
     flex-shrink: 0;
-    padding: 12px 16px;
+    padding: 8px 12px;
     border-top: 1px solid var(--SmartThemeBorderColor, #444);
     background: var(--SmartThemeBlurTintColor, #16213e);
-    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
 
 .sim-footer.hidden {
@@ -256,11 +256,11 @@
 }
 
 .sim-btn {
-    padding: 7px 14px;
+    padding: 6px 12px;
     border: 1px solid var(--SmartThemeBorderColor, #555);
-    border-radius: 8px;
+    border-radius: 7px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 400;
     transition: border-color 0.15s ease;
     background: var(--white30a, rgba(255, 255, 255, 0.1));
@@ -268,7 +268,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 5px;
     white-space: nowrap;
     box-sizing: border-box;
     flex-shrink: 0;
@@ -306,9 +306,9 @@
 
 /* ---- Small Button ---- */
 .sim-btn-sm {
-    padding: 4px 10px;
-    font-size: 11px;
-    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 10px;
+    border-radius: 5px;
 }
 
 /* ---- Detail View ---- */
@@ -594,7 +594,7 @@
 
 .sim-detail-actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     justify-content: space-between;
     flex-shrink: 0;
 }
@@ -602,7 +602,7 @@
 .sim-detail-left-actions,
 .sim-detail-right-actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     flex-wrap: wrap;
 }
 
@@ -690,7 +690,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 11px 14px;
-    border: 1px solid var(--SmartThemeBorderColor, #333);
+    border: none;
     border-radius: 10px;
     cursor: pointer;
     transition: background 0.15s ease, border-color 0.15s ease;
@@ -773,8 +773,8 @@
     }
 
     .sim-header {
-        padding: 12px 16px;
-        padding-top: calc(12px + env(safe-area-inset-top, 0px));
+        padding: 8px 12px;
+        padding-top: calc(8px + env(safe-area-inset-top, 0px));
     }
 
     .sim-content {
@@ -782,8 +782,8 @@
     }
 
     .sim-footer {
-        padding: 12px 14px;
-        padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+        padding: 8px 12px;
+        padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     }
 
     .sim-detail-actions {
@@ -807,8 +807,13 @@
     }
 
     .sim-btn {
-        padding: 10px 16px;
-        font-size: 13px;
+        padding: 7px 12px;
+        font-size: 12px;
+    }
+
+    .sim-btn-sm {
+        padding: 3px 8px;
+        font-size: 10px;
     }
 
     .sim-create-actions {
@@ -1199,6 +1204,78 @@
 }
 
 /* ============================================
+   확장 설정 패널 (Extensions 메뉴 내부 드로어)
+   ============================================ */
+.sim-settings-body {
+    padding: 6px 2px 2px;
+}
+
+.sim-settings-title {
+    margin: 14px 0 8px;
+    font-size: calc(var(--mainFontSize) * 0.95);
+    font-weight: 600;
+    color: var(--SmartThemeQuoteColor, #7c83ff);
+}
+
+.sim-settings-title:first-child {
+    margin-top: 0;
+}
+
+.sim-settings-block {
+    margin-bottom: 10px;
+}
+
+.sim-settings-block:last-child {
+    margin-bottom: 0;
+}
+
+.sim-settings-label {
+    display: block;
+    font-size: calc(var(--mainFontSize) * 0.85);
+    color: var(--SmartThemeEmColor, #aaa);
+    margin-bottom: 4px;
+}
+
+.sim-settings-hr {
+    margin: 14px 0;
+}
+
+.sim-settings-checkbox {
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+.sim-settings-checkbox:last-of-type {
+    margin-bottom: 4px;
+}
+
+.sim-settings-hint {
+    font-size: calc(var(--mainFontSize) * 0.75);
+    color: var(--SmartThemeEmColor, #888);
+    line-height: 1.5;
+    margin: 0 0 10px;
+}
+
+.sim-settings-subblock {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 6px 0 10px;
+    padding-left: 2px;
+}
+
+.sim-settings-textarea {
+    min-height: 70px;
+    resize: vertical;
+    line-height: 1.5;
+    font-family: inherit;
+}
+
+.sim-settings-wide-btn {
+    width: 100%;
+}
+
+/* ============================================
    표시 설정 - 아이콘 선택 그리드
    ============================================ */
 .sim-icon-grid {
@@ -1319,4 +1396,276 @@
 .sim-ms-stop {
     width: 100%;
     margin-top: 12px;
+}
+
+/* ============================================
+   전송 전 프롬프트 확인 모달
+   ============================================ */
+.sim-preview-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    /* JS 가 window.innerHeight 로 실제 픽셀 높이를 덮어씀 (모바일 주소창 대응) */
+    background: rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10050;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+.sim-preview-box {
+    background: var(--SmartThemeBlurTintColor, #1a1a2e);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 14px;
+    width: 900px;
+    max-width: 100%;
+    height: 100%;
+    max-height: 860px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.sim-preview-head {
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+    flex: 0 0 auto;
+}
+
+.sim-preview-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--SmartThemeBodyColor, #eee);
+    margin-bottom: 8px;
+}
+
+.sim-preview-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.sim-preview-chip {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 10px;
+    background: rgba(124, 131, 255, 0.15);
+    color: var(--SmartThemeQuoteColor, #9aa0ff);
+    white-space: nowrap;
+}
+
+.sim-preview-toolbar {
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+    flex: 0 0 auto;
+}
+
+.sim-preview-search {
+    flex: 1 1 160px;
+    min-width: 0;
+    padding: 6px 10px;
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 6px;
+    background: var(--SmartThemeBlurTintColor, #0d1117);
+    color: var(--SmartThemeBodyColor, #ddd);
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+.sim-preview-search-info {
+    font-size: 11px;
+    color: var(--SmartThemeQuoteColor, #9aa0ff);
+    white-space: nowrap;
+}
+
+.sim-btn-mini {
+    padding: 5px 9px !important;
+    font-size: 11px !important;
+    white-space: nowrap;
+}
+
+.sim-preview-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 10px 16px;
+}
+
+.sim-preview-empty {
+    text-align: center;
+    color: #888;
+    font-size: 12px;
+    padding: 24px 0;
+}
+
+.sim-preview-msg {
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}
+
+.sim-preview-msg-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    font-size: 11px;
+    flex-wrap: wrap;
+}
+
+.sim-preview-role {
+    padding: 2px 7px;
+    border-radius: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    background: #444;
+    color: #ddd;
+    flex: 0 0 auto;
+}
+
+.sim-preview-role-system {
+    background: rgba(124, 131, 255, 0.25);
+    color: #9aa0ff;
+}
+
+.sim-preview-role-user {
+    background: rgba(76, 175, 125, 0.25);
+    color: #6fd39d;
+}
+
+.sim-preview-role-assistant {
+    background: rgba(230, 162, 60, 0.25);
+    color: #e6a23c;
+}
+
+.sim-preview-label {
+    color: var(--SmartThemeBodyColor, #ddd);
+    font-weight: 600;
+    word-break: break-word;
+}
+
+.sim-preview-name {
+    color: #888;
+}
+
+.sim-preview-size {
+    color: #777;
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+.sim-preview-hitcount {
+    color: #e6a23c;
+    font-weight: 600;
+    flex: 0 0 auto;
+}
+
+.sim-preview-caret {
+    color: #777;
+    font-size: 10px;
+    flex: 0 0 auto;
+}
+
+.sim-preview-msg-body {
+    padding: 9px 11px;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    color: var(--SmartThemeBodyColor, #ccc);
+    font-family: var(--monoFontFamily, monospace);
+}
+
+.sim-preview-msg-body.collapsed {
+    max-height: 3.4em;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+}
+
+.sim-preview-hit {
+    background: rgba(230, 162, 60, 0.45);
+    color: inherit;
+    border-radius: 2px;
+}
+
+.sim-preview-foot {
+    padding: 10px 16px;
+    border-top: 1px solid var(--SmartThemeBorderColor, #444);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+/* ---- 모바일: 메인 팝업과 같은 전체화면 방식 ---- */
+@media (max-width: 768px) {
+    .sim-preview-overlay {
+        padding: 0;
+        align-items: stretch;
+    }
+
+    .sim-preview-box {
+        width: 100%;
+        max-width: 100%;
+        max-height: none;
+        border-radius: 0;
+        border: none;
+        box-shadow: none;
+    }
+
+    .sim-preview-head {
+        padding: 10px 12px 8px;
+        padding-top: calc(10px + env(safe-area-inset-top, 0px));
+    }
+
+    .sim-preview-title {
+        font-size: 14px;
+        margin-bottom: 6px;
+    }
+
+    .sim-preview-toolbar {
+        padding: 8px 12px;
+        gap: 6px;
+    }
+
+    /* 검색창은 한 줄 통째로, 버튼들은 그 아래 줄에 */
+    .sim-preview-search {
+        flex: 1 1 100%;
+    }
+
+    .sim-preview-body {
+        padding: 8px 12px;
+    }
+
+    .sim-preview-msg-head {
+        font-size: 10.5px;
+        gap: 5px;
+    }
+
+    .sim-preview-foot {
+        padding: 8px 12px;
+        padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    }
+
+    /* 취소 / 전송 버튼은 화면 폭을 반씩 */
+    .sim-preview-foot .sim-btn {
+        flex: 1 1 0;
+    }
 }

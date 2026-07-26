@@ -11,10 +11,8 @@
  */
 
 import { extension_settings, saveMetadataDebounced, getContext } from '../../../extensions.js';
-import { eventSource, event_types, generateQuietPrompt, substituteParams, chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, setExtensionPrompt, extension_prompt_types, extension_prompt_roles, doNewChat, chat, saveChatConditional, printMessages, addOneMessage, stopGeneration } from '../../../../script.js';
+import { eventSource, event_types, generateQuietPrompt, substituteParams, saveSettingsDebounced, setExtensionPrompt, extension_prompt_types, extension_prompt_roles, doNewChat, chat, saveChatConditional, printMessages, addOneMessage, stopGeneration } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
-import { getPresetManager } from '../../../preset-manager.js';
-import { oai_settings, promptManager } from '../../../openai.js';
 import { playMessageSound } from '../../../power-user.js';
 import {
     EXTENSION_NAME,
@@ -31,558 +29,46 @@ import {
     SIM_OOC_KEY,
     SIM_SAVE_BTN_CLASS,
 } from './constants.js';
-
-// ============================================
-// Preset Helpers
-// ============================================
-function getOpenAiPresetManager() {
-    return getPresetManager('openai');
-}
-
-function getAvailablePresetNames() {
-    const pm = getOpenAiPresetManager();
-    if (!pm) return [];
-    try { return pm.getAllPresets(); } catch { return []; }
-}
-
-function getCurrentPresetName() {
-    return oai_settings?.preset_settings_openai || '';
-}
-
-function isCustomPresetTogglesEnabled() {
-    const s = extension_settings[CUSTOM_PRESET_EXT];
-    return !!(s && s.showTogglePresetFeature);
-}
-
-function getTogglePresetMap(presetName) {
-    const s = extension_settings[CUSTOM_PRESET_EXT];
-    if (!s || !s.togglePresets || !presetName) return null;
-    const map = s.togglePresets[presetName];
-    return (map && typeof map === 'object') ? map : null;
-}
-
-function getTogglePresetNames(presetName) {
-    const map = getTogglePresetMap(presetName);
-    if (!map) return [];
-    const names = Object.keys(map);
-    // 'default' 가 있으면 첫 번째로
-    return ['default', ...names.filter(n => n !== 'default').sort()].filter(n => map[n]);
-}
-
-function getCurrentActiveTogglePresetName(presetName) {
-    const s = extension_settings[CUSTOM_PRESET_EXT];
-    if (!s || !s.activeTogglePreset || !presetName) return 'default';
-    return s.activeTogglePreset[presetName] || 'default';
-}
-
-function captureToggleSnapshot() {
-    const ss = promptManager?.serviceSettings;
-    if (!ss?.prompt_order) return null;
-    const entry = ss.prompt_order.find(e => e.character_id === 100001);
-    if (!entry?.order) return null;
-    const snap = {};
-    for (const item of entry.order) snap[item.identifier] = !!item.enabled;
-    return snap;
-}
-
-function applyToggleSnapshot(snapshot) {
-    if (!snapshot) return false;
-    const ss = promptManager?.serviceSettings;
-    if (!ss?.prompt_order) return false;
-    const entry = ss.prompt_order.find(e => e.character_id === 100001);
-    if (!entry?.order) return false;
-    let changed = false;
-    for (const item of entry.order) {
-        if (Object.prototype.hasOwnProperty.call(snapshot, item.identifier)) {
-            const desired = !!snapshot[item.identifier];
-            if (item.enabled !== desired) {
-                item.enabled = desired;
-                changed = true;
-            }
-        }
-    }
-    if (changed) {
-        try { promptManager.saveServiceSettings(); } catch (e) { console.error(DEBUG_PREFIX, e); }
-        try { promptManager.render(); } catch (e) { console.error(DEBUG_PREFIX, e); }
-    }
-    return true;
-}
-
-async function switchPresetTo(presetName) {
-    const pm = getOpenAiPresetManager();
-    if (!pm) return false;
-    const value = pm.findPreset(presetName);
-    if (value === undefined || value === null) return false;
-    if (pm.getSelectedPresetName() === presetName) return true;
-    const done = new Promise(resolve => {
-        const onAfter = () => { eventSource.removeListener(event_types.OAI_PRESET_CHANGED_AFTER, onAfter); resolve(); };
-        eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, onAfter);
-        // 안전장치: 5초 내 응답 없으면 풀기
-        setTimeout(() => { eventSource.removeListener(event_types.OAI_PRESET_CHANGED_AFTER, onAfter); resolve(); }, 5000);
-    });
-    pm.selectPreset(value);
-    await done;
-    return true;
-}
-
-/**
- * 시뮬레이션용 프리셋/토글 프리셋을 임시로 적용한 뒤 fn 실행, 끝나면 원복.
- * presetName / togglePresetName 가 비어있으면 해당 항목은 변경하지 않음.
- */
-async function withSimulationPreset(presetName, togglePresetName, fn) {
-    const pm = getOpenAiPresetManager();
-    const prevPresetName = pm ? pm.getSelectedPresetName() : '';
-    const prevToggleSnap = captureToggleSnapshot();
-    const needPresetSwitch = !!presetName && pm && presetName !== prevPresetName;
-    let presetSwitched = false;
-    try {
-        if (needPresetSwitch) {
-            const ok = await switchPresetTo(presetName);
-            if (!ok) {
-                console.warn(DEBUG_PREFIX, `Preset "${presetName}" not found, using current.`);
-                if (typeof toastr !== 'undefined') toastr.warning(`프리셋 "${presetName}" 을(를) 찾을 수 없어 현재 프리셋으로 진행합니다.`, '시뮬 매니저');
-            } else {
-                presetSwitched = true;
-            }
-        }
-        // 토글 프리셋은 프리셋 전환 이후에 적용 (전환 시 토글 상태가 덮어써질 수 있음)
-        if (togglePresetName) {
-            const effectivePreset = presetSwitched ? presetName : prevPresetName;
-            const map = getTogglePresetMap(effectivePreset);
-            if (map && map[togglePresetName]) {
-                applyToggleSnapshot(map[togglePresetName]);
-            } else {
-                console.warn(DEBUG_PREFIX, `Toggle preset "${togglePresetName}" not found for "${effectivePreset}".`);
-            }
-        }
-        return await fn();
-    } finally {
-        // 원복: 프리셋 먼저, 토글 그 다음 (프리셋 전환이 토글을 다시 덮으므로)
-        if (presetSwitched && prevPresetName) {
-            try { await switchPresetTo(prevPresetName); } catch (e) { console.error(DEBUG_PREFIX, 'Restore preset failed:', e); }
-        }
-        if (prevToggleSnap) {
-            try { applyToggleSnapshot(prevToggleSnap); } catch (e) { console.error(DEBUG_PREFIX, 'Restore toggles failed:', e); }
-        }
-    }
-}
-
-// ============================================
-// Default Settings
-// ============================================
-const defaultSettings = {
-    savedPrompts: [],
-    notificationsEnabled: true,
-    globalSimulations: {}, // { chatKey: { chatName, simulations: [...] } }
-    // 번역 설정
-    translationEnabled: false,
-    translationTargetLang: '한국어',
-    translationCustomPrompt: '',
-    translationProfileId: '',
-    translationVertexAuthMode: 'express', // 'express' | 'full'
-    // 기본 주입 위치 ('last_message' | 'depth_1' | 'depth_0' | 'bottom')
-    defaultInjectPosition: 'last_message',
-    // 표시(브랜딩) 설정: 지팡이 버튼 + 헤더에 공통 적용
-    displayName: '시뮬레이션',
-    displayIcon: 'fa-flask',
-    // 저장된 프롬프트 불러오기 정렬 ('newest' | 'oldest' | 'name')
-    promptSortOrder: 'newest',
-};
-
-const PROMPT_SORT_ORDERS = ['newest', 'oldest', 'name'];
-
-function ensureSettings() {
-    if (!extension_settings[EXTENSION_NAME]) {
-        extension_settings[EXTENSION_NAME] = structuredClone(defaultSettings);
-    }
-    const s = extension_settings[EXTENSION_NAME];
-    if (!Array.isArray(s.savedPrompts)) s.savedPrompts = [];
-    if (typeof s.notificationsEnabled !== 'boolean') s.notificationsEnabled = true;
-    if (!s.globalSimulations || typeof s.globalSimulations !== 'object') s.globalSimulations = {};
-    if (typeof s.translationEnabled !== 'boolean') s.translationEnabled = false;
-    if (!s.translationTargetLang) s.translationTargetLang = '한국어';
-    if (typeof s.translationCustomPrompt !== 'string') s.translationCustomPrompt = '';
-    if (typeof s.translationProfileId !== 'string') s.translationProfileId = '';
-    if (typeof s.translationVertexAuthMode !== 'string' || s.translationVertexAuthMode === '') s.translationVertexAuthMode = 'express';
-    if (typeof s.defaultInjectPosition !== 'string') s.defaultInjectPosition = 'last_message';
-    if (typeof s.displayName !== 'string' || s.displayName.trim() === '') s.displayName = '시뮬레이션';
-    if (typeof s.displayIcon !== 'string' || s.displayIcon.trim() === '') s.displayIcon = 'fa-flask';
-    if (!PROMPT_SORT_ORDERS.includes(s.promptSortOrder)) s.promptSortOrder = 'newest';
-}
-
-function getDisplayName() {
-    ensureSettings();
-    return extension_settings[EXTENSION_NAME].displayName;
-}
-
-function getDisplayIcon() {
-    ensureSettings();
-    const icon = extension_settings[EXTENSION_NAME].displayIcon;
-    // 프리셋에 없는 값이면 기본값으로 폴백 (잘못된 클래스 주입 방지)
-    return SIM_ICON_PRESETS.includes(icon) ? icon : 'fa-flask';
-}
-
-function getDefaultInjectPosition() {
-    ensureSettings();
-    return normalizeSimPosition(extension_settings[EXTENSION_NAME].defaultInjectPosition);
-}
-
-// ============================================
-// Char/User Swap & Pronoun Swap
-// ============================================
-function preserveCase(sourceWord, targetWord) {
-    if (!sourceWord) return targetWord;
-    if (sourceWord === sourceWord.toUpperCase() && sourceWord !== sourceWord.toLowerCase()) {
-        return targetWord.toUpperCase();
-    }
-    if (sourceWord[0] === sourceWord[0].toUpperCase() && sourceWord[0] !== sourceWord[0].toLowerCase()) {
-        return targetWord[0].toUpperCase() + targetWord.slice(1).toLowerCase();
-    }
-    return targetWord.toLowerCase();
-}
-
-function applySwap(text, swapCharUser, swapPronouns) {
-    if (!text) return text;
-    let out = text;
-    if (swapCharUser) {
-        // {{char}} ↔ {{user}} 동시 교체
-        out = out.replace(/\{\{(char|user)\}\}/g, (_, name) => (name === 'char' ? '{{user}}' : '{{char}}'));
-    }
-    if (swapPronouns) {
-        out = out.replace(PRONOUN_REGEX, (match) => {
-            const lower = match.toLowerCase();
-            const replacement = PRONOUN_MAP[lower];
-            return replacement ? preserveCase(match, replacement) : match;
-        });
-    }
-    return out;
-}
-
-function getEffectivePromptText(sim) {
-    return applySwap(sim?.promptText || '', !!sim?.swapCharUser, !!sim?.swapPronouns);
-}
-
-/**
- * 시뮬 목록/상세에 표시할 제목.
- * 사용자가 직접 지정한 customTitle 이 최우선 (프롬프트 자동 동기화로 덮이지 않음).
- */
-function getSimDisplayTitle(sim) {
-    if (sim?.customTitle && sim.customTitle.trim()) return sim.customTitle.trim();
-    if (sim?.promptName) return sim.promptName;
-    const pt = sim?.promptText || '';
-    if (!pt) return '(제목 없음)';
-    return pt.length > 80 ? pt.slice(0, 80) + '...' : pt;
-}
-
-function getSimulations() {
-    if (!chat_metadata[EXTENSION_NAME]) {
-        chat_metadata[EXTENSION_NAME] = { simulations: [] };
-    }
-    if (!Array.isArray(chat_metadata[EXTENSION_NAME].simulations)) {
-        chat_metadata[EXTENSION_NAME].simulations = [];
-    }
-    return chat_metadata[EXTENSION_NAME].simulations;
-}
-
-function saveSimulations() {
-    saveChatDebounced();
-    syncToGlobal();
-}
-
-// ============================================
-// Global Simulation Store
-// ============================================
-function getCurrentChatKey() {
-    try {
-        const context = getContext();
-        if (context.groupId) return `group_${context.groupId}`;
-        // 캐릭터 이름 + 채팅 파일명 (스캔 키와 동일 형식)
-        const charIdx = context.characterId;
-        const characters = context.characters || [];
-        const char = characters[charIdx];
-        if (char) {
-            // char.chat = 현재 열린 채팅 파일명 (확장자 없음)
-            return `${char.name}_${char.chat || context.chatId || 0}`;
-        }
-        const charName = context.name2 || 'unknown';
-        const chatId = context.chatId ?? 0;
-        return `${charName}_${chatId}`;
-    } catch {
-        return null;
-    }
-}
-
-function getCurrentChatDisplayName() {
-    try {
-        const context = getContext();
-        if (context.groupId) {
-            return context.name2 || '그룹 채팅';
-        }
-        const charIdx = context.characterId;
-        const characters = context.characters || [];
-        const char = characters[charIdx];
-        const chatFile = char?.chat || context.chatId || '';
-        if (chatFile) {
-            return String(chatFile);
-        }
-        return context.name2 || '알 수 없는 채팅';
-    } catch {
-        return '알 수 없는 채팅';
-    }
-}
-
-function syncToGlobal() {
-    const chatKey = getCurrentChatKey();
-    if (!chatKey) return;
-    ensureSettings();
-    const global = extension_settings[EXTENSION_NAME].globalSimulations;
-    const sims = getSimulations();
-
-    if (sims.length === 0) {
-        delete global[chatKey];
-    } else {
-        global[chatKey] = {
-            chatName: getCurrentChatDisplayName(),
-            simulations: structuredClone(sims),
-        };
-    }
-    saveSettingsDebounced();
-}
-
-// 전체 채팅방 스캔 → 글로벌 동기화
-async function scanAllChatsForSimulations() {
-    ensureSettings();
-    const global = extension_settings[EXTENSION_NAME].globalSimulations;
-    let totalFound = 0;
-
-    try {
-        const context = getContext();
-        const headers = getRequestHeaders();
-
-        // 1. 현재 채팅 먼저 동기화
-        const currentKey = getCurrentChatKey();
-        if (currentKey) {
-            const currentSims = getSimulations();
-            if (currentSims.length > 0) {
-                global[currentKey] = {
-                    chatName: getCurrentChatDisplayName(),
-                    simulations: structuredClone(currentSims),
-                };
-                totalFound += currentSims.length;
-            }
-        }
-
-        // 2. 모든 캐릭터의 모든 채팅 파일 스캔
-        const characters = context.characters || [];
-        for (const char of characters) {
-            if (!char?.avatar) continue;
-
-            let chatFiles = [];
-            try {
-                const listRes = await fetch('/api/characters/chats', {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ avatar_url: char.avatar }),
-                });
-                if (!listRes.ok) continue;
-                chatFiles = Object.values(await listRes.json());
-            } catch (e) { continue; }
-
-            if (!Array.isArray(chatFiles)) continue;
-
-            for (const chatFile of chatFiles) {
-                const fileName = chatFile.file_name;
-                if (!fileName) continue;
-
-                // 현재 열려있는 채팅이면 이미 동기화했으므로 스킵
-                const scanKey = `${char.name}_${fileName.replace('.jsonl', '')}`;
-                if (scanKey === currentKey) continue;
-
-                try {
-                    const chatRes = await fetch('/api/chats/get', {
-                        method: 'POST',
-                        headers,
-                        cache: 'no-cache',
-                        body: JSON.stringify({
-                            ch_name: char.name,
-                            file_name: fileName.replace('.jsonl', ''),
-                            avatar_url: char.avatar,
-                        }),
-                    });
-                    if (!chatRes.ok) continue;
-                    const messages = await chatRes.json();
-
-                    if (!Array.isArray(messages) || messages.length === 0) continue;
-
-                    // JSONL 첫 번째 줄 = chat_metadata
-                    const metadata = messages[0];
-                    const extData = metadata?.[EXTENSION_NAME];
-
-                    if (extData?.simulations?.length > 0) {
-                        global[scanKey] = {
-                            chatName: fileName.replace('.jsonl', ''),
-                            simulations: structuredClone(extData.simulations),
-                        };
-                        totalFound += extData.simulations.length;
-                    }
-                } catch (e) { continue; }
-            }
-        }
-
-        // 3. 그룹 채팅 스캔
-        const groups = context.groups || [];
-        for (const group of groups) {
-            if (!group?.id) continue;
-
-            try {
-                const chatRes = await fetch('/api/chats/group/get', {
-                    method: 'POST',
-                    headers,
-                    cache: 'no-cache',
-                    body: JSON.stringify({ id: group.id }),
-                });
-                if (!chatRes.ok) continue;
-                const messages = await chatRes.json();
-
-                if (!Array.isArray(messages) || messages.length === 0) continue;
-
-                const metadata = messages[0];
-                const extData = metadata?.[EXTENSION_NAME];
-
-                if (extData?.simulations?.length > 0) {
-                    const groupKey = `group_${group.id}`;
-                    global[groupKey] = {
-                        chatName: group.name || '그룹 채팅',
-                        simulations: structuredClone(extData.simulations),
-                    };
-                    totalFound += extData.simulations.length;
-                }
-            } catch (e) { continue; }
-        }
-
-        saveSettingsDebounced();
-        return totalFound;
-    } catch (e) {
-        console.error(DEBUG_PREFIX, 'Scan failed:', e);
-        return -1;
-    }
-}
-
-// ============================================
-// Backup (내보내기) & Cleanup (캐시 정리)
-// ============================================
-
-/**
- * 전체 시뮬을 JSON 파일로 내보내기 (다운로드).
- * 채팅 파일은 건드리지 않음 — 스캔(읽기) 후 globalSimulations 캐시를 직렬화.
- * @returns {Promise<number>} 내보낸 시뮬 개수 (실패 시 -1)
- */
-async function exportSimBackup() {
-    try {
-        await scanAllChatsForSimulations(); // 최신 데이터 보장
-        ensureSettings();
-        const data = extension_settings[EXTENSION_NAME].globalSimulations || {};
-        const simCount = Object.values(data).reduce((n, d) => n + (d?.simulations?.length || 0), 0);
-
-        const payload = {
-            type: 'sim-manager-backup',
-            version: 1,
-            exportedAt: new Date().toISOString(),
-            chatCount: Object.keys(data).length,
-            simCount,
-            globalSimulations: structuredClone(data),
-        };
-
-        const json = JSON.stringify(payload, null, 2);
-        const blob = new Blob([json], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        a.href = url;
-        a.download = `sim-manager-backup_${stamp}.json`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        return simCount;
-    } catch (e) {
-        console.error(DEBUG_PREFIX, 'Export failed:', e);
-        return -1;
-    }
-}
-
-/**
- * 현재 존재하는 채팅방 키 집합 수집 (채팅 내용은 안 읽고 목록만).
- * @returns {Promise<{keys: Set<string>, complete: boolean}>}
- *   complete=false 면 일부 캐릭터 목록을 못 읽은 것 → '유령 항목' 정리는 보류해야 안전.
- */
-async function collectExistingChatKeys() {
-    const keys = new Set();
-    let complete = true;
-    const context = getContext();
-    const headers = getRequestHeaders();
-
-    const cur = getCurrentChatKey();
-    if (cur) keys.add(cur);
-
-    for (const char of (context.characters || [])) {
-        if (!char?.avatar) continue;
-        try {
-            const res = await fetch('/api/characters/chats', {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ avatar_url: char.avatar }),
-            });
-            if (!res.ok) { complete = false; continue; }
-            const files = Object.values(await res.json());
-            for (const f of files) {
-                const fn = f?.file_name;
-                if (fn) keys.add(`${char.name}_${fn.replace('.jsonl', '')}`);
-            }
-        } catch (e) {
-            complete = false;
-        }
-    }
-
-    for (const group of (context.groups || [])) {
-        if (group?.id) keys.add(`group_${group.id}`);
-    }
-
-    return { keys, complete };
-}
-
-/**
- * 모아보기 캐시(globalSimulations) 정리.
- * - 빈 항목(시뮬 0개) 제거: 항상 안전
- * - 삭제된 채팅의 유령 항목 제거: 채팅 목록을 모두 성공적으로 읽었을 때만
- * 채팅 파일은 건드리지 않음 (설정 캐시만 수정).
- * @returns {Promise<{removedEmpty: number, removedGone: number, prunedGone: boolean}>}
- */
-async function cleanupGlobalCache() {
-    ensureSettings();
-    const global = extension_settings[EXTENSION_NAME].globalSimulations || {};
-    const { keys, complete } = await collectExistingChatKeys();
-
-    let removedEmpty = 0;
-    let removedGone = 0;
-
-    for (const key of Object.keys(global)) {
-        const entry = global[key];
-        const empty = !entry?.simulations || entry.simulations.length === 0;
-        if (empty) {
-            delete global[key];
-            removedEmpty++;
-            continue;
-        }
-        if (complete && !keys.has(key)) {
-            delete global[key];
-            removedGone++;
-        }
-    }
-
-    saveSettingsDebounced();
-    return { removedEmpty, removedGone, prunedGone: complete };
-}
+import {
+    sleep,
+    normalizeSimPosition,
+    applySwap,
+    escapeHtml,
+    normalizePromptText,
+    getFullResponseText,
+    copyTextToClipboard,
+    renderResponseText,
+} from './utils.js';
+import {
+    PROMPT_SORT_ORDERS,
+    ensureSettings,
+    getDisplayName,
+    getDisplayIcon,
+    getDefaultInjectPosition,
+} from './config.js';
+import {
+    getAvailablePresetNames,
+    getCurrentPresetName,
+    isCustomPresetTogglesEnabled,
+    getTogglePresetNames,
+    getCurrentActiveTogglePresetName,
+    withSimulationPreset,
+} from './preset.js';
+import {
+    withPromptIntercept,
+} from './promptPreview.js';
+import {
+    getEffectivePromptText,
+    getSimDisplayTitle,
+    getSimulations,
+    saveSimulations,
+    getCurrentChatKey,
+    getCurrentChatDisplayName,
+    syncToGlobal,
+    scanAllChatsForSimulations,
+    exportSimBackup,
+    cleanupGlobalCache,
+} from './store.js';
 
 // ============================================
 // State
@@ -592,6 +78,7 @@ let currentSimId = null;
 let tempSim = null; // 저장 안 하기 모드의 임시 sim
 let isEditingPrompt = false;
 let isEditingTitle = false; // 상세 뷰에서 제목 수정 중인지
+let pendingCreateDraft = null; // 전송 취소로 되돌아올 때 작성 화면에 복원할 입력값
 let editingPartIdx = null; // null = 안 함, 0 = base, 1+ = continuation index+1
 
 // Global viewer state
@@ -616,16 +103,21 @@ let multiSendShouldStop = false;    // 중지 버튼 눌림
 let multiSendTargetsCache = [];     // 생성 화면에 표시 중인 대상 목록 (캐시)
 let multiSendSelKeys = new Set();   // 선택된 대상 키 (type:id)
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 /**
  * 시뮬 생성을 중단. generateQuietPrompt 는 GENERATION_STOPPED 이벤트를 듣고 abort 한다.
  */
 function stopSimGeneration() {
     simAborted = true;
     try { stopGeneration(); } catch (e) { console.error(DEBUG_PREFIX, 'stopGeneration failed:', e); }
+}
+
+/**
+ * 전송 전 프롬프트 확인(인터셉트)을 걸고 fn 실행.
+ * 설정이 꺼져 있으면 그냥 fn 을 통과시킨다. 모달에서 취소하면 simAborted 를 세워
+ * 기존 '취소했습니다' 안내 경로를 그대로 탄다.
+ */
+function withSimIntercept(meta, fn) {
+    return withPromptIntercept({ ...meta, onCancel: () => { simAborted = true; } }, fn);
 }
 
 /**
@@ -691,46 +183,78 @@ function buildSettingsHTML() {
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
-                <div style="padding: 8px 0;">
-                    <h4 style="margin:8px 0 4px; font-size:14px;">표시 설정</h4>
-                    <label style="font-size:12px; color:#aaa;">이름 (지팡이 버튼 · 헤더 공통)</label>
-                    <input type="text" id="sim-display-name" placeholder="시뮬레이션" maxlength="20" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;" />
-                    <label style="font-size:12px; color:#aaa;">아이콘</label>
-                    <div id="sim-icon-grid" class="sim-icon-grid"></div>
-                    <hr />
-                    <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+                <div class="sim-settings-body">
+                    <h4 class="sim-settings-title">표시 설정</h4>
+                    <div class="sim-settings-block">
+                        <label class="sim-settings-label" for="sim-display-name">이름 (지팡이 버튼 · 헤더 공통)</label>
+                        <input type="text" id="sim-display-name" class="text_pole" placeholder="시뮬레이션" maxlength="20" />
+                    </div>
+                    <div class="sim-settings-block">
+                        <label class="sim-settings-label">아이콘</label>
+                        <div id="sim-icon-grid" class="sim-icon-grid"></div>
+                    </div>
+
+                    <hr class="sim-settings-hr" />
+
+                    <label class="checkbox_label sim-settings-checkbox">
                         <input type="checkbox" id="sim-notifications-toggle" />
                         시뮬 완료 시 알림 표시
                     </label>
-                    <hr />
-                    <button class="sim-btn sim-btn-primary" id="sim-global-viewer-btn" style="width:100%; margin-bottom:12px; padding:10px;">
+                    <label class="checkbox_label sim-settings-checkbox">
+                        <input type="checkbox" id="sim-prompt-intercept-toggle" />
+                        전송 전 프롬프트 확인
+                    </label>
+                    <div class="sim-settings-hint">
+                        켜면 시뮬 전송·재생성·이어쓰기·통제광 직전에 조립이 끝난 최종 프롬프트를 보여주고
+                        전송할지 물어봅니다. (여러 방에 보내기는 제외)
+                    </div>
+
+                    <hr class="sim-settings-hr" />
+
+                    <button class="sim-btn sim-btn-primary sim-settings-wide-btn" id="sim-global-viewer-btn">
                         <i class="fa-solid fa-layer-group"></i> 시뮬레이션 모아보기
                     </button>
-                    <hr />
-                    <h4 style="margin:8px 0 4px; font-size:14px;">기본 주입 위치</h4>
-                    <label style="font-size:12px; color:#aaa;">새 시뮬 생성 시 기본 선택값</label>
-                    <select id="sim-default-position" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;"></select>
-                    <hr />
-                    <h4 style="margin:8px 0 4px; font-size:14px;">번역 설정</h4>
-                    <label style="font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+
+                    <hr class="sim-settings-hr" />
+
+                    <h4 class="sim-settings-title">기본 주입 위치</h4>
+                    <div class="sim-settings-block">
+                        <label class="sim-settings-label">새 시뮬 생성 시 기본 선택값</label>
+                        <select id="sim-default-position" class="text_pole"></select>
+                    </div>
+
+                    <hr class="sim-settings-hr" />
+
+                    <h4 class="sim-settings-title">번역 설정</h4>
+                    <label class="checkbox_label sim-settings-checkbox">
                         <input type="checkbox" id="sim-translation-toggle" />
                         응답 번역 기능 사용
                     </label>
-                    <div id="sim-translation-settings" style="display:none; margin-bottom:8px;">
-                        <label style="font-size:12px; color:#aaa;">Connection Profile</label>
-                        <select id="sim-translation-profile" class="text_pole connection_profile" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;"></select>
-                        <label style="font-size:12px; color:#aaa;">Vertex AI Auth Mode (Vertex AI 프로필만 해당)</label>
-                        <select id="sim-vertex-auth-mode" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;">
-                            <option value="express">Express (API Key)</option>
-                            <option value="full">Full (Service Account JSON)</option>
-                        </select>
-                        <label style="font-size:12px; color:#aaa;">번역 대상 언어</label>
-                        <input type="text" id="sim-translation-lang" placeholder="한국어" style="width:100%; padding:8px 10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; margin-bottom:8px;" />
-                        <label style="font-size:12px; color:#aaa;">커스텀 번역 프롬프트 (선택)</label>
-                        <textarea id="sim-translation-prompt" placeholder="비워두면 기본 프롬프트 사용" style="width:100%; min-height:60px; padding:10px; border:1px solid var(--SmartThemeBorderColor,#444); border-radius:6px; background:var(--SmartThemeBlurTintColor,#0d1117); color:var(--SmartThemeBodyColor,#ddd); font-size:13px; resize:vertical; font-family:inherit; line-height:1.5;"></textarea>
+                    <div id="sim-translation-settings" class="sim-settings-subblock" style="display:none;">
+                        <div class="sim-settings-block">
+                            <label class="sim-settings-label">Connection Profile</label>
+                            <select id="sim-translation-profile" class="text_pole connection_profile"></select>
+                        </div>
+                        <div class="sim-settings-block">
+                            <label class="sim-settings-label">Vertex AI Auth Mode (Vertex AI 프로필만 해당)</label>
+                            <select id="sim-vertex-auth-mode" class="text_pole">
+                                <option value="express">Express (API Key)</option>
+                                <option value="full">Full (Service Account JSON)</option>
+                            </select>
+                        </div>
+                        <div class="sim-settings-block">
+                            <label class="sim-settings-label">번역 대상 언어</label>
+                            <input type="text" id="sim-translation-lang" class="text_pole" placeholder="한국어" />
+                        </div>
+                        <div class="sim-settings-block">
+                            <label class="sim-settings-label">커스텀 번역 프롬프트 (선택)</label>
+                            <textarea id="sim-translation-prompt" class="text_pole sim-settings-textarea" placeholder="비워두면 기본 프롬프트 사용"></textarea>
+                        </div>
                     </div>
-                    <hr />
-                    <button class="sim-btn sim-btn-primary" id="sim-open-prompt-manager-btn" style="width:100%; margin-top:4px;">
+
+                    <hr class="sim-settings-hr" />
+
+                    <button class="sim-btn sim-btn-primary sim-settings-wide-btn" id="sim-open-prompt-manager-btn">
                         <i class="fa-solid fa-bookmark"></i> 저장된 프롬프트 관리
                     </button>
                 </div>
@@ -812,6 +336,7 @@ function renderListView() {
     if (footer) { footer.innerHTML = ''; footer.classList.add('hidden'); }
 
     document.getElementById('sim-go-create')?.addEventListener('click', () => {
+        pendingCreateDraft = null; // 목록에서 새로 들어온 경우는 빈 화면으로
         currentView = 'create';
         renderCreateView();
     });
@@ -1069,6 +594,37 @@ function renderCreateView() {
     }
     refreshTogglePresetOptions();
     presetSelect?.addEventListener('change', refreshTogglePresetOptions);
+
+    // 전송 취소로 돌아온 경우: 방금 보냈던 입력값 복원 (한 번만 적용)
+    if (pendingCreateDraft) {
+        const d = pendingCreateDraft;
+        pendingCreateDraft = null;
+
+        const setVal = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
+        const setChecked = (id, value) => { const el = document.getElementById(id); if (el) el.checked = !!value; };
+
+        setVal('sim-title-input', d.customTitle || '');
+        setVal('sim-prompt-input', d.rawPrompt || '');
+        setVal('sim-position-select', d.chosenPosition);
+        setChecked('sim-swap-charuser', d.chosenSwapCharUser);
+        setChecked('sim-swap-pronouns', d.chosenSwapPronouns);
+        setChecked('sim-no-save-prompt', d.noSavePrompt);
+
+        // 프리셋을 먼저 되돌린 뒤 토글 목록을 다시 만들어야 토글 선택값이 살아난다
+        if (presetSelect && d.chosenPresetName) {
+            presetSelect.value = d.chosenPresetName;
+            refreshTogglePresetOptions();
+        }
+        if (togglePresetSelect && d.chosenTogglePresetName) {
+            togglePresetSelect.value = d.chosenTogglePresetName;
+        }
+
+        // 불러온 프롬프트 선택 상태 (목록에 남아 있을 때만)
+        const loadSelect = document.getElementById('sim-load-prompt');
+        if (loadSelect && d.loadedPromptId && loadSelect.querySelector(`option[value="${d.loadedPromptId}"]`)) {
+            loadSelect.value = d.loadedPromptId;
+        }
+    }
 }
 
 function renderDetailView() {
@@ -1182,7 +738,7 @@ function renderDetailView() {
     const html = `
     <div class="sim-detail-view">
         <div class="sim-detail-topbar">
-            <button class="sim-btn sim-btn-sm" id="sim-back-to-list">
+            <button class="sim-btn" id="sim-back-to-list">
                 <i class="fa-solid fa-arrow-left"></i> 목록으로
             </button>
             ${titleBlock}
@@ -2209,7 +1765,9 @@ async function handleSendSimulation() {
         // 현재 처리 중인 sim 의 injectPosition 사용 + 프리셋/토글 프리셋 임시 적용
         const activeSim = (tempSim && tempSim.id === currentSimId) ? tempSim : sims.find(s => s.id === currentSimId) || sim;
         const rawResponse = await withSimulationPreset(chosenPresetName, chosenTogglePresetName, () =>
-            runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, activeSim?.injectPosition)
+            withSimIntercept(
+                { kind: '새 시뮬 전송', position: activeSim?.injectPosition },
+                () => runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, activeSim?.injectPosition))
         );
         console.log(DEBUG_PREFIX, 'Raw response length:', rawResponse?.length);
 
@@ -2230,12 +1788,57 @@ async function handleSendSimulation() {
             console.error(DEBUG_PREFIX, 'Generation failed:', err);
             toastr.error('시뮬레이션 생성에 실패했습니다.', '시뮬 매니저');
         }
+        // 방금 만든 시뮬이 응답 하나 없이 끝났으면 되돌리고 작성 화면으로 복귀
+        if (discardEmptyNewSim()) {
+            pendingCreateDraft = {
+                rawPrompt,
+                customTitle,
+                chosenPresetName,
+                chosenTogglePresetName,
+                chosenPosition,
+                chosenSwapCharUser,
+                chosenSwapPronouns,
+                noSavePrompt,
+                loadedPromptId,
+            };
+            currentView = 'create';
+            isEditingPrompt = false;
+        }
     } finally {
         exitSimGeneratingMode();
-        if (currentView === 'detail') {
+        if (currentView === 'create') {
+            renderCreateView();
+        } else if (currentView === 'detail') {
             renderDetailView();
         }
     }
+}
+
+/**
+ * 현재 보고 있는 시뮬이 응답 0개면 목록에서 제거한다 (전송 취소/실패 롤백용).
+ * 응답이 하나라도 있으면 손대지 않는다.
+ * @returns {boolean} 실제로 제거했는지
+ */
+function discardEmptyNewSim() {
+    if (!currentSimId) return false;
+
+    // 저장 안 하기 모드: 메모리상의 임시 sim
+    if (tempSim && tempSim.id === currentSimId) {
+        if (tempSim.responses?.length) return false;
+        tempSim = null;
+        currentSimId = null;
+        return true;
+    }
+
+    const liveSims = getSimulations();
+    const idx = liveSims.findIndex(s => s.id === currentSimId);
+    if (idx === -1) return false;
+    if (liveSims[idx].responses?.length) return false;
+
+    liveSims.splice(idx, 1);
+    saveSimulations();
+    currentSimId = null;
+    return true;
 }
 
 // ============================================
@@ -2618,7 +2221,9 @@ async function handleRegenerateSimulation(sim) {
     const simId = sim.id;
     try {
         const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
-            runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, sim.injectPosition)
+            withSimIntercept(
+                { kind: '답변 재생성', position: sim.injectPosition },
+                () => runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, sim.injectPosition))
         );
         // 생성 후에 live sim 을 다시 찾아서 push (preset 전환 중 chat_metadata 가 바뀌었을 수 있음)
         const liveSims = getSimulations();
@@ -2662,7 +2267,9 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
         const continueDirective = SIM_CONTINUE_INSTRUCTION;
         const continueBody = `<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${fullResponse}\n</response_so_far>`;
         const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
-            runSimGeneration(continueDirective, continueBody, sim.injectPosition)
+            withSimIntercept(
+                { kind: '이어쓰기', position: sim.injectPosition },
+                () => runSimGeneration(continueDirective, continueBody, sim.injectPosition))
         );
         // preset 전환 중 chat_metadata 가 바뀌었을 수 있으므로 live sim 재조회 (비글로벌만)
         let target = sim;
@@ -2701,10 +2308,6 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
             if (currentView === 'detail' && currentSimId === sim.id) renderDetailView();
         }
     }
-}
-
-function normalizeSimPosition(v) {
-    return Object.values(SIM_POSITIONS).includes(v) ? v : SIM_POSITIONS.LAST_MESSAGE;
 }
 
 function setSimDirectiveSystem(directive) {
@@ -2842,8 +2445,11 @@ ${feedback}
 You are an editor. Rewrite ONLY the original_message above based on the feedback. Do NOT roleplay. Do NOT continue the story. Begin the revised text now:`;
 
         try {
+            simAborted = false;
             const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
-                generateQuietPrompt({ quietPrompt: revisionPrompt, quietToLoud: true })
+                withSimIntercept(
+                    { kind: '통제광 (파트 수정)', position: SIM_POSITIONS.BOTTOM },
+                    () => generateQuietPrompt({ quietPrompt: revisionPrompt, quietToLoud: true }))
             );
             // preset 전환 중 chat_metadata 가 바뀌었을 수 있어 live sim 재조회 (비글로벌)
             let target = sim;
@@ -2869,8 +2475,12 @@ You are an editor. Rewrite ONLY the original_message above based on the feedback
             }
             toastr.success('파트가 수정되었습니다.', '통제광');
         } catch (err) {
-            console.error(DEBUG_PREFIX, 'Part revision failed:', err);
-            toastr.error('수정 요청에 실패했습니다.', '통제광');
+            if (simAborted) {
+                toastr.info('수정 요청을 취소했습니다.', '통제광');
+            } else {
+                console.error(DEBUG_PREFIX, 'Part revision failed:', err);
+                toastr.error('수정 요청에 실패했습니다.', '통제광');
+            }
         }
     });
 }
@@ -3493,18 +3103,6 @@ function openPopupToSim(simId) {
 // ============================================
 // Utils
 // ============================================
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// 외부에서 복붙된 nbsp 류를 일반 공백으로 정리 (시뮬 요청 텍스트에만 적용)
-function normalizePromptText(text) {
-    if (typeof text !== 'string') return text;
-    return text.replace(/[  ]/g, ' ');
-}
-
 /**
  * 원본 응답 + continuation 파트들을 각각 별도 div로 렌더링.
  * 각 파트마다 수정/번역/삭제 액션을 독립 제공.
@@ -3571,15 +3169,6 @@ function renderResponseParts(sim, responseIdx, currentEditPart = null, isGlobal 
 }
 
 /**
- * 원본 + continuation을 합친 전체 텍스트 반환.
- */
-function getFullResponseText(sim, responseIdx) {
-    const base = sim.responses[responseIdx] || '';
-    const conts = sim.continuations?.[String(responseIdx)] || [];
-    return base + conts.join('');
-}
-
-/**
  * 특정 파트의 텍스트 반환. 번역 보기 상태면 번역문, 아니면 원문.
  */
 function getPartText(sim, responseIdx, partIdx) {
@@ -3589,60 +3178,6 @@ function getPartText(sim, responseIdx, partIdx) {
     const original = parts[partIdx] || '';
     const translated = sim.partTranslations?.[String(responseIdx)]?.[String(partIdx)];
     return (showTranslated && translated) ? translated : original;
-}
-
-/**
- * 텍스트를 클립보드에 복사. HTTPS/localhost 가 아닌 환경 대비 fallback 포함.
- */
-async function copyTextToClipboard(text) {
-    if (!text) return;
-    try {
-        if (navigator.clipboard && window.isSecureContext) {
-            await navigator.clipboard.writeText(text);
-        } else {
-            const ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-        }
-        if (typeof toastr !== 'undefined') toastr.success('복사되었습니다.', '시뮬 매니저');
-    } catch (e) {
-        console.error(DEBUG_PREFIX, 'Copy failed:', e);
-        if (typeof toastr !== 'undefined') toastr.error('복사에 실패했습니다.', '시뮬 매니저');
-    }
-}
-
-function renderResponseText(text) {
-    try {
-        const context = getContext();
-        if (typeof context.messageFormatting === 'function') {
-            const result = context.messageFormatting(text, '', false, false, -1);
-            if (result && result.length > 0) return result;
-        }
-    } catch (e) { /* fallback */ }
-
-    let html = escapeHtml(text);
-    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
-    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-    html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    html = html.replace(/~~(.+?)~~/g, '<del>$1</del>');
-    html = html.replace(/(^&gt; (.+)$\n?)+/gm, (match) => {
-        const lines = match.trim().split('\n').map(l => l.replace(/^&gt; /, '')).join('<br>');
-        return `<blockquote>${lines}</blockquote>`;
-    });
-    html = html.replace(/^---$/gm, '<hr>');
-    html = html.replace(/\n/g, '<br>');
-    return html;
 }
 
 // ============================================
@@ -3711,6 +3246,16 @@ function renderResponseText(text) {
             toggle.checked = extension_settings[EXTENSION_NAME].notificationsEnabled;
             toggle.addEventListener('change', () => {
                 extension_settings[EXTENSION_NAME].notificationsEnabled = toggle.checked;
+                saveSettingsDebounced();
+            });
+        }
+
+        // 전송 전 프롬프트 확인 (인터셉트)
+        const interceptToggle = document.getElementById('sim-prompt-intercept-toggle');
+        if (interceptToggle) {
+            interceptToggle.checked = !!extension_settings[EXTENSION_NAME].promptIntercept;
+            interceptToggle.addEventListener('change', () => {
+                extension_settings[EXTENSION_NAME].promptIntercept = interceptToggle.checked;
                 saveSettingsDebounced();
             });
         }
