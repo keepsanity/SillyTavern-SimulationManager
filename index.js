@@ -57,6 +57,7 @@ import {
 import {
     withPromptIntercept,
 } from './promptPreview.js';
+import { S } from './state.js';
 import {
     getEffectivePromptText,
     getSimDisplayTitle,
@@ -70,62 +71,29 @@ import {
     cleanupGlobalCache,
 } from './store.js';
 
-// ============================================
-// State
-// ============================================
-let currentView = 'list'; // 'list' | 'create' | 'detail' | 'globalList' | 'globalSimList' | 'globalDetail'
-let currentSimId = null;
-let tempSim = null; // 저장 안 하기 모드의 임시 sim
-let isEditingPrompt = false;
-let isEditingTitle = false; // 상세 뷰에서 제목 수정 중인지
-let pendingCreateDraft = null; // 전송 취소로 되돌아올 때 작성 화면에 복원할 입력값
-let editingPartIdx = null; // null = 안 함, 0 = base, 1+ = continuation index+1
-
-// Global viewer state
-let globalViewChatKey = null;
-let globalViewSimId = null;
-let globalViewSimIndex = 0;
-let isEditingGlobalPrompt = false;
-let editingGlobalPartIdx = null;
-
-// Translation state
-let showTranslated = false; // true면 번역 보기, false면 원문 보기
-let isTranslating = false;
-let translatingPartIdx = null; // 현재 번역 중인 파트 인덱스
-
-// Generation state (생성 중단)
-let simGenerating = false;  // 시뮬 생성(최초/재생성/이어쓰기)이 진행 중인지
-let simAborted = false;     // 사용자가 '중단'을 눌러 abort 했는지
-
-// 다중 전송(여러 채팅방) 상태
-let multiSendRunning = false;       // 다중 전송 루프 진행 중
-let multiSendShouldStop = false;    // 중지 버튼 눌림
-let multiSendTargetsCache = [];     // 생성 화면에 표시 중인 대상 목록 (캐시)
-let multiSendSelKeys = new Set();   // 선택된 대상 키 (type:id)
-
 /**
  * 시뮬 생성을 중단. generateQuietPrompt 는 GENERATION_STOPPED 이벤트를 듣고 abort 한다.
  */
 function stopSimGeneration() {
-    simAborted = true;
+    S.simAborted = true;
     try { stopGeneration(); } catch (e) { console.error(DEBUG_PREFIX, 'stopGeneration failed:', e); }
 }
 
 /**
  * 전송 전 프롬프트 확인(인터셉트)을 걸고 fn 실행.
- * 설정이 꺼져 있으면 그냥 fn 을 통과시킨다. 모달에서 취소하면 simAborted 를 세워
+ * 설정이 꺼져 있으면 그냥 fn 을 통과시킨다. 모달에서 취소하면 S.simAborted 를 세워
  * 기존 '취소했습니다' 안내 경로를 그대로 탄다.
  */
 function withSimIntercept(meta, fn) {
-    return withPromptIntercept({ ...meta, onCancel: () => { simAborted = true; } }, fn);
+    return withPromptIntercept({ ...meta, onCancel: () => { S.simAborted = true; } }, fn);
 }
 
 /**
  * 생성 시작 시 호출. activeBtnId 버튼을 '중단' 버튼으로 바꾸고, 다른 생성 버튼은 비활성화.
  */
 function enterSimGeneratingMode(activeBtnId) {
-    simGenerating = true;
-    simAborted = false;
+    S.simGenerating = true;
+    S.simAborted = false;
     for (const id of ['sim-continue', 'sim-continue-dir', 'sim-regenerate']) {
         const b = document.getElementById(id);
         if (!b) continue;
@@ -144,7 +112,7 @@ function enterSimGeneratingMode(activeBtnId) {
  * 생성 종료 시 호출. 보통 직후 재렌더로 푸터가 새로 그려지지만, 방어적으로 stop 플래그를 정리.
  */
 function exitSimGeneratingMode() {
-    simGenerating = false;
+    S.simGenerating = false;
     for (const id of ['sim-continue', 'sim-continue-dir', 'sim-regenerate']) {
         const el = document.getElementById(id);
         if (!el) continue;
@@ -336,17 +304,17 @@ function renderListView() {
     if (footer) { footer.innerHTML = ''; footer.classList.add('hidden'); }
 
     document.getElementById('sim-go-create')?.addEventListener('click', () => {
-        pendingCreateDraft = null; // 목록에서 새로 들어온 경우는 빈 화면으로
-        currentView = 'create';
+        S.pendingCreateDraft = null; // 목록에서 새로 들어온 경우는 빈 화면으로
+        S.currentView = 'create';
         renderCreateView();
     });
 
     container.querySelectorAll('.sim-item').forEach(el => {
         el.addEventListener('click', () => {
-            currentSimId = el.dataset.simId;
-            currentView = 'detail';
-            isEditingPrompt = false;
-            isEditingTitle = false;
+            S.currentSimId = el.dataset.simId;
+            S.currentView = 'detail';
+            S.isEditingPrompt = false;
+            S.isEditingTitle = false;
             renderDetailView();
         });
     });
@@ -596,9 +564,9 @@ function renderCreateView() {
     presetSelect?.addEventListener('change', refreshTogglePresetOptions);
 
     // 전송 취소로 돌아온 경우: 방금 보냈던 입력값 복원 (한 번만 적용)
-    if (pendingCreateDraft) {
-        const d = pendingCreateDraft;
-        pendingCreateDraft = null;
+    if (S.pendingCreateDraft) {
+        const d = S.pendingCreateDraft;
+        S.pendingCreateDraft = null;
 
         const setVal = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
         const setChecked = (id, value) => { const el = document.getElementById(id); if (el) el.checked = !!value; };
@@ -632,7 +600,7 @@ function renderDetailView() {
     if (!container) return;
 
     const sims = getSimulations();
-    const sim = (tempSim && tempSim.id === currentSimId) ? tempSim : sims.find(s => s.id === currentSimId);
+    const sim = (S.tempSim && S.tempSim.id === S.currentSimId) ? S.tempSim : sims.find(s => s.id === S.currentSimId);
     if (!sim) {
         goToList();
         return;
@@ -644,7 +612,7 @@ function renderDetailView() {
 
     // 프롬프트 영역: 수정 모드 vs 보기 모드
     let promptBoxContent;
-    if (isEditingPrompt) {
+    if (S.isEditingPrompt) {
         promptBoxContent = `
             <div class="sim-detail-prompt-label">시뮬 요청 <span style="font-size:10px; color:#888;">(수정 중)</span></div>
             <textarea class="sim-edit-prompt-textarea" id="sim-edit-prompt-input">${escapeHtml(normalizePromptText(sim.promptText))}</textarea>
@@ -665,7 +633,7 @@ function renderDetailView() {
 
     // ===== 제목 (사용자 지정 가능) =====
     let titleBlock;
-    if (isEditingTitle) {
+    if (S.isEditingTitle) {
         titleBlock = `
             <div class="sim-detail-title-row">
                 <input type="text" class="sim-title-edit-input" id="sim-title-edit-input"
@@ -771,7 +739,7 @@ function renderDetailView() {
             </div>
             ` : ''}
             <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}" id="sim-response-display">
-                ${responseCount === 0 ? '아직 응답이 없습니다...' : renderResponseParts(sim, currentIdx, editingPartIdx, false)}
+                ${responseCount === 0 ? '아직 응답이 없습니다...' : renderResponseParts(sim, currentIdx, S.editingPartIdx, false)}
             </div>
         </div>
     </div>`;
@@ -799,12 +767,12 @@ function renderDetailView() {
     document.getElementById('sim-edit-prompt-btn')?.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        isEditingPrompt = true;
+        S.isEditingPrompt = true;
         renderDetailView();
     });
 
     document.getElementById('sim-edit-cancel')?.addEventListener('click', () => {
-        isEditingPrompt = false;
+        S.isEditingPrompt = false;
         renderDetailView();
     });
 
@@ -817,7 +785,7 @@ function renderDetailView() {
             return;
         }
         sim.promptText = newText;
-        isEditingPrompt = false;
+        S.isEditingPrompt = false;
         saveSimulations();
         renderDetailView();
         if (typeof toastr !== 'undefined') toastr.success('시뮬 내용이 수정되었습니다.', '시뮬 매니저');
@@ -827,7 +795,7 @@ function renderDetailView() {
     document.getElementById('sim-edit-title-btn')?.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        isEditingTitle = true;
+        S.isEditingTitle = true;
         renderDetailView();
         const titleInput = document.getElementById('sim-title-edit-input');
         if (titleInput) {
@@ -842,19 +810,19 @@ function renderDetailView() {
         const val = input.value.trim();
         if (val) sim.customTitle = val;
         else delete sim.customTitle; // 비우면 기존 프롬프트 제목으로 복귀
-        isEditingTitle = false;
-        if (!tempSim || tempSim.id !== sim.id) saveSimulations();
+        S.isEditingTitle = false;
+        if (!S.tempSim || S.tempSim.id !== sim.id) saveSimulations();
         renderDetailView();
         if (typeof toastr !== 'undefined') toastr.success('제목이 변경되었습니다.', '시뮬 매니저');
     };
     document.getElementById('sim-title-edit-save')?.addEventListener('click', saveTitle);
     document.getElementById('sim-title-edit-cancel')?.addEventListener('click', () => {
-        isEditingTitle = false;
+        S.isEditingTitle = false;
         renderDetailView();
     });
     document.getElementById('sim-title-edit-input')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); saveTitle(); }
-        else if (e.key === 'Escape') { e.preventDefault(); isEditingTitle = false; renderDetailView(); }
+        else if (e.key === 'Escape') { e.preventDefault(); S.isEditingTitle = false; renderDetailView(); }
     });
 
     // ===== 통합 설정 패널 =====
@@ -866,7 +834,7 @@ function renderDetailView() {
     const detailSwapCharUser = document.getElementById('sim-detail-swap-charuser');
     const detailSwapPronouns = document.getElementById('sim-detail-swap-pronouns');
 
-    const saveSimIfNotTemp = () => { if (!tempSim || tempSim.id !== sim.id) saveSimulations(); };
+    const saveSimIfNotTemp = () => { if (!S.tempSim || S.tempSim.id !== sim.id) saveSimulations(); };
     const refreshSummary = () => {
         const target = document.getElementById('sim-detail-settings-summary');
         if (!target) return;
@@ -990,11 +958,11 @@ function renderDetailView() {
 
             switch (action) {
                 case 'part-edit':
-                    editingPartIdx = partIdx;
+                    S.editingPartIdx = partIdx;
                     renderDetailView();
                     break;
                 case 'part-edit-cancel':
-                    editingPartIdx = null;
+                    S.editingPartIdx = null;
                     renderDetailView();
                     break;
                 case 'part-edit-save': {
@@ -1009,7 +977,7 @@ function renderDetailView() {
                     }
                     // 해당 파트 번역 캐시 무효화
                     if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
-                    editingPartIdx = null;
+                    S.editingPartIdx = null;
                     saveSimulations();
                     renderDetailView();
                     toastr.success('파트가 수정되었습니다.', '시뮬 매니저');
@@ -1026,7 +994,7 @@ function renderDetailView() {
                     break;
                 case 'part-retranslate':
                     if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
-                    showTranslated = false;
+                    S.showTranslated = false;
                     translatePart(sim, currentIdx, partIdx, renderDetailView);
                     break;
                 case 'part-delete': {
@@ -1048,8 +1016,8 @@ function renderDetailView() {
     document.getElementById('sim-prev-response')?.addEventListener('click', () => {
         if (sim.currentIndex > 0) {
             sim.currentIndex--;
-            editingPartIdx = null;
-            showTranslated = false;
+            S.editingPartIdx = null;
+            S.showTranslated = false;
             saveSimulations();
             renderDetailView();
         }
@@ -1058,8 +1026,8 @@ function renderDetailView() {
     document.getElementById('sim-next-response')?.addEventListener('click', () => {
         if (sim.currentIndex < sim.responses.length - 1) {
             sim.currentIndex++;
-            editingPartIdx = null;
-            showTranslated = false;
+            S.editingPartIdx = null;
+            S.showTranslated = false;
             saveSimulations();
             renderDetailView();
         }
@@ -1213,8 +1181,8 @@ function renderGlobalListView() {
     // 채팅방 클릭 → 해당 채팅의 시뮬 목록
     container.querySelectorAll('.sim-global-chat-item').forEach(el => {
         el.addEventListener('click', () => {
-            globalViewChatKey = el.dataset.chatKey;
-            currentView = 'globalSimList';
+            S.globalViewChatKey = el.dataset.chatKey;
+            S.currentView = 'globalSimList';
             renderGlobalSimListView();
         });
     });
@@ -1223,13 +1191,13 @@ function renderGlobalListView() {
 function renderGlobalSimListView() {
     const container = document.getElementById('sim-content');
     if (!container) return;
-    maybeResetContentScroll('globalSimList', globalViewChatKey);
+    maybeResetContentScroll('globalSimList', S.globalViewChatKey);
 
     ensureSettings();
     const global = extension_settings[EXTENSION_NAME].globalSimulations;
-    const chatData = global[globalViewChatKey];
+    const chatData = global[S.globalViewChatKey];
     if (!chatData) {
-        currentView = 'globalList';
+        S.currentView = 'globalList';
         renderGlobalListView();
         return;
     }
@@ -1274,16 +1242,16 @@ function renderGlobalSimListView() {
 
     // 뒤로가기
     document.getElementById('sim-back-to-global-list')?.addEventListener('click', () => {
-        currentView = 'globalList';
+        S.currentView = 'globalList';
         renderGlobalListView();
     });
 
     // 시뮬 클릭 → 글로벌 디테일
     container.querySelectorAll('.sim-global-item').forEach(el => {
         el.addEventListener('click', () => {
-            globalViewSimId = el.dataset.simId;
-            globalViewSimIndex = 0;
-            currentView = 'globalDetail';
+            S.globalViewSimId = el.dataset.simId;
+            S.globalViewSimIndex = 0;
+            S.currentView = 'globalDetail';
             renderGlobalDetailView();
         });
     });
@@ -1295,27 +1263,27 @@ function renderGlobalDetailView() {
 
     ensureSettings();
     const global = extension_settings[EXTENSION_NAME].globalSimulations;
-    const chatData = global[globalViewChatKey];
+    const chatData = global[S.globalViewChatKey];
     if (!chatData) {
-        currentView = 'globalList';
+        S.currentView = 'globalList';
         renderGlobalListView();
         return;
     }
 
-    const sim = chatData.simulations.find(s => s.id === globalViewSimId);
+    const sim = chatData.simulations.find(s => s.id === S.globalViewSimId);
     if (!sim) {
-        currentView = 'globalList';
+        S.currentView = 'globalList';
         renderGlobalListView();
         return;
     }
     maybeResetContentScroll('globalDetail', sim.id);
 
     const responseCount = sim.responses ? sim.responses.length : 0;
-    const currentIdx = globalViewSimIndex || 0;
+    const currentIdx = S.globalViewSimIndex || 0;
 
     // 프롬프트 영역
     let promptBoxContent;
-    if (isEditingGlobalPrompt) {
+    if (S.isEditingGlobalPrompt) {
         promptBoxContent = `
             <div class="sim-detail-prompt-label">시뮬 요청 <span style="font-size:10px; color:#888;">(수정 중)</span></div>
             <textarea class="sim-edit-prompt-textarea" id="sim-gv-edit-prompt-input">${escapeHtml(normalizePromptText(sim.promptText))}</textarea>
@@ -1365,7 +1333,7 @@ function renderGlobalDetailView() {
             </div>
             ` : ''}
             <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}" id="sim-gv-response-display">
-                ${responseCount === 0 ? '응답 없음' : renderResponseParts(sim, currentIdx, editingGlobalPartIdx, true)}
+                ${responseCount === 0 ? '응답 없음' : renderResponseParts(sim, currentIdx, S.editingGlobalPartIdx, true)}
             </div>
         </div>
     </div>`;
@@ -1384,26 +1352,26 @@ function renderGlobalDetailView() {
 
     // 이벤트
     document.getElementById('sim-back-to-global-simlist')?.addEventListener('click', () => {
-        currentView = 'globalSimList';
-        isEditingGlobalPrompt = false;
-        editingGlobalPartIdx = null;
+        S.currentView = 'globalSimList';
+        S.isEditingGlobalPrompt = false;
+        S.editingGlobalPartIdx = null;
         renderGlobalSimListView();
     });
 
     document.getElementById('sim-gv-prev')?.addEventListener('click', () => {
-        if (globalViewSimIndex > 0) {
-            globalViewSimIndex--;
-            editingGlobalPartIdx = null;
-            showTranslated = false;
+        if (S.globalViewSimIndex > 0) {
+            S.globalViewSimIndex--;
+            S.editingGlobalPartIdx = null;
+            S.showTranslated = false;
             renderGlobalDetailView();
         }
     });
 
     document.getElementById('sim-gv-next')?.addEventListener('click', () => {
-        if (globalViewSimIndex < responseCount - 1) {
-            globalViewSimIndex++;
-            editingGlobalPartIdx = null;
-            showTranslated = false;
+        if (S.globalViewSimIndex < responseCount - 1) {
+            S.globalViewSimIndex++;
+            S.editingGlobalPartIdx = null;
+            S.showTranslated = false;
             renderGlobalDetailView();
         }
     });
@@ -1412,12 +1380,12 @@ function renderGlobalDetailView() {
     document.getElementById('sim-gv-edit-prompt-btn')?.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        isEditingGlobalPrompt = true;
+        S.isEditingGlobalPrompt = true;
         renderGlobalDetailView();
     });
 
     document.getElementById('sim-gv-edit-cancel')?.addEventListener('click', () => {
-        isEditingGlobalPrompt = false;
+        S.isEditingGlobalPrompt = false;
         renderGlobalDetailView();
     });
 
@@ -1427,7 +1395,7 @@ function renderGlobalDetailView() {
         const newText = normalizePromptText(textarea.value.trim());
         if (!newText) { alert('내용을 입력해주세요.'); return; }
         sim.promptText = newText;
-        isEditingGlobalPrompt = false;
+        S.isEditingGlobalPrompt = false;
         saveSettingsDebounced();
         renderGlobalDetailView();
         if (typeof toastr !== 'undefined') toastr.success('시뮬 내용이 수정되었습니다.', '시뮬 매니저');
@@ -1445,11 +1413,11 @@ function renderGlobalDetailView() {
 
             switch (action) {
                 case 'part-edit':
-                    editingGlobalPartIdx = partIdx;
+                    S.editingGlobalPartIdx = partIdx;
                     renderGlobalDetailView();
                     break;
                 case 'part-edit-cancel':
-                    editingGlobalPartIdx = null;
+                    S.editingGlobalPartIdx = null;
                     renderGlobalDetailView();
                     break;
                 case 'part-edit-save': {
@@ -1463,7 +1431,7 @@ function renderGlobalDetailView() {
                         if (sim.continuations?.[key]) sim.continuations[key][partIdx - 1] = newText;
                     }
                     if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
-                    editingGlobalPartIdx = null;
+                    S.editingGlobalPartIdx = null;
                     saveSettingsDebounced();
                     renderGlobalDetailView();
                     toastr.success('파트가 수정되었습니다.', '시뮬 매니저');
@@ -1480,7 +1448,7 @@ function renderGlobalDetailView() {
                     break;
                 case 'part-retranslate':
                     if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
-                    showTranslated = false;
+                    S.showTranslated = false;
                     translatePart(sim, currentIdx, partIdx, renderGlobalDetailView);
                     break;
                 case 'part-delete': {
@@ -1505,8 +1473,8 @@ function renderGlobalDetailView() {
             if (sim.translations) delete sim.translations[String(currentIdx)];
             if (sim.continuations) delete sim.continuations[String(currentIdx)];
             if (sim.partTranslations) delete sim.partTranslations[String(currentIdx)];
-            if (globalViewSimIndex >= sim.responses.length) {
-                globalViewSimIndex = Math.max(0, sim.responses.length - 1);
+            if (S.globalViewSimIndex >= sim.responses.length) {
+                S.globalViewSimIndex = Math.max(0, sim.responses.length - 1);
             }
             saveSettingsDebounced();
             renderGlobalDetailView();
@@ -1520,11 +1488,11 @@ function renderGlobalDetailView() {
             if (idx !== -1) {
                 chatData.simulations.splice(idx, 1);
                 if (chatData.simulations.length === 0) {
-                    delete global[globalViewChatKey];
-                    currentView = 'globalList';
+                    delete global[S.globalViewChatKey];
+                    S.currentView = 'globalList';
                     renderGlobalListView();
                 } else {
-                    currentView = 'globalSimList';
+                    S.currentView = 'globalSimList';
                     renderGlobalSimListView();
                 }
                 saveSettingsDebounced();
@@ -1553,7 +1521,7 @@ function buildTranslationPrompt(text) {
  * 파트별 번역. sim.partTranslations[responseIdx][partIdx]에 저장.
  */
 async function translatePart(sim, responseIdx, partIdx, renderFn) {
-    if (isTranslating) return;
+    if (S.isTranslating) return;
 
     if (!sim.partTranslations) sim.partTranslations = {};
     const rKey = String(responseIdx);
@@ -1562,7 +1530,7 @@ async function translatePart(sim, responseIdx, partIdx, renderFn) {
 
     // 이미 번역 있으면 토글
     if (sim.partTranslations[rKey][pKey]) {
-        showTranslated = !showTranslated;
+        S.showTranslated = !S.showTranslated;
         renderFn();
         return;
     }
@@ -1587,8 +1555,8 @@ async function translatePart(sim, responseIdx, partIdx, renderFn) {
         return;
     }
 
-    isTranslating = true;
-    translatingPartIdx = partIdx;
+    S.isTranslating = true;
+    S.translatingPartIdx = partIdx;
     renderFn();
 
     try {
@@ -1620,9 +1588,9 @@ async function translatePart(sim, responseIdx, partIdx, renderFn) {
         if (!translated) throw new Error('번역 결과가 비어있습니다.');
 
         sim.partTranslations[rKey][pKey] = translated;
-        showTranslated = true;
+        S.showTranslated = true;
 
-        if (currentView === 'detail') {
+        if (S.currentView === 'detail') {
             saveSimulations();
         } else {
             saveSettingsDebounced();
@@ -1633,8 +1601,8 @@ async function translatePart(sim, responseIdx, partIdx, renderFn) {
         console.error(DEBUG_PREFIX, 'Part translation failed:', err);
         toastr.error(`번역 실패: ${err.message}`, '시뮬 매니저');
     } finally {
-        isTranslating = false;
-        translatingPartIdx = null;
+        S.isTranslating = false;
+        S.translatingPartIdx = null;
         renderFn();
     }
 }
@@ -1733,15 +1701,15 @@ async function handleSendSimulation() {
             }
         }
 
-        currentSimId = sim.id;
-        currentView = 'detail';
-        isEditingPrompt = false;
+        S.currentSimId = sim.id;
+        S.currentView = 'detail';
+        S.isEditingPrompt = false;
         renderDetailView();
     } else {
         // 저장 안 하기 모드: 임시 sim 객체 (메모리에만)
-        currentSimId = `temp_${uuidv4()}`;
-        tempSim = {
-            id: currentSimId,
+        S.currentSimId = `temp_${uuidv4()}`;
+        S.tempSim = {
+            id: S.currentSimId,
             promptText: rawPrompt,
             promptName: promptName,
             responses: [],
@@ -1753,8 +1721,8 @@ async function handleSendSimulation() {
             swapCharUser: chosenSwapCharUser,
             swapPronouns: chosenSwapPronouns,
         };
-        currentView = 'detail';
-        isEditingPrompt = false;
+        S.currentView = 'detail';
+        S.isEditingPrompt = false;
         renderDetailView();
     }
 
@@ -1763,7 +1731,7 @@ async function handleSendSimulation() {
         console.log(DEBUG_PREFIX, 'Generating simulation response...');
 
         // 현재 처리 중인 sim 의 injectPosition 사용 + 프리셋/토글 프리셋 임시 적용
-        const activeSim = (tempSim && tempSim.id === currentSimId) ? tempSim : sims.find(s => s.id === currentSimId) || sim;
+        const activeSim = (S.tempSim && S.tempSim.id === S.currentSimId) ? S.tempSim : sims.find(s => s.id === S.currentSimId) || sim;
         const rawResponse = await withSimulationPreset(chosenPresetName, chosenTogglePresetName, () =>
             withSimIntercept(
                 { kind: '새 시뮬 전송', position: activeSim?.injectPosition },
@@ -1771,18 +1739,18 @@ async function handleSendSimulation() {
         );
         console.log(DEBUG_PREFIX, 'Raw response length:', rawResponse?.length);
 
-        // noSave 모드에서는 tempSim 사용
-        const targetSim = (tempSim && tempSim.id === currentSimId) ? tempSim : sims.find(s => s.id === currentSimId) || sim;
+        // noSave 모드에서는 S.tempSim 사용
+        const targetSim = (S.tempSim && S.tempSim.id === S.currentSimId) ? S.tempSim : sims.find(s => s.id === S.currentSimId) || sim;
         targetSim.responses.push(rawResponse);
         targetSim.currentIndex = 0;
-        if (!tempSim || tempSim.id !== currentSimId) {
+        if (!S.tempSim || S.tempSim.id !== S.currentSimId) {
             saveSimulations();
         }
 
         showSimNotification(targetSim);
         console.log(DEBUG_PREFIX, 'Simulation response received.');
     } catch (err) {
-        if (simAborted) {
+        if (S.simAborted) {
             toastr.info('시뮬레이션 생성을 취소했습니다.', '시뮬 매니저');
         } else {
             console.error(DEBUG_PREFIX, 'Generation failed:', err);
@@ -1790,7 +1758,7 @@ async function handleSendSimulation() {
         }
         // 방금 만든 시뮬이 응답 하나 없이 끝났으면 되돌리고 작성 화면으로 복귀
         if (discardEmptyNewSim()) {
-            pendingCreateDraft = {
+            S.pendingCreateDraft = {
                 rawPrompt,
                 customTitle,
                 chosenPresetName,
@@ -1801,14 +1769,14 @@ async function handleSendSimulation() {
                 noSavePrompt,
                 loadedPromptId,
             };
-            currentView = 'create';
-            isEditingPrompt = false;
+            S.currentView = 'create';
+            S.isEditingPrompt = false;
         }
     } finally {
         exitSimGeneratingMode();
-        if (currentView === 'create') {
+        if (S.currentView === 'create') {
             renderCreateView();
-        } else if (currentView === 'detail') {
+        } else if (S.currentView === 'detail') {
             renderDetailView();
         }
     }
@@ -1820,24 +1788,24 @@ async function handleSendSimulation() {
  * @returns {boolean} 실제로 제거했는지
  */
 function discardEmptyNewSim() {
-    if (!currentSimId) return false;
+    if (!S.currentSimId) return false;
 
     // 저장 안 하기 모드: 메모리상의 임시 sim
-    if (tempSim && tempSim.id === currentSimId) {
-        if (tempSim.responses?.length) return false;
-        tempSim = null;
-        currentSimId = null;
+    if (S.tempSim && S.tempSim.id === S.currentSimId) {
+        if (S.tempSim.responses?.length) return false;
+        S.tempSim = null;
+        S.currentSimId = null;
         return true;
     }
 
     const liveSims = getSimulations();
-    const idx = liveSims.findIndex(s => s.id === currentSimId);
+    const idx = liveSims.findIndex(s => s.id === S.currentSimId);
     if (idx === -1) return false;
     if (liveSims[idx].responses?.length) return false;
 
     liveSims.splice(idx, 1);
     saveSimulations();
-    currentSimId = null;
+    S.currentSimId = null;
     return true;
 }
 
@@ -1956,26 +1924,26 @@ function setupMultiSendDrawer() {
     const listEl = document.getElementById('sim-multisend-list');
     if (!listEl) return;
 
-    multiSendTargetsCache = getMultiSendTargets();
-    multiSendSelKeys = new Set();
+    S.multiSendTargetsCache = getMultiSendTargets();
+    S.multiSendSelKeys = new Set();
 
     const keyOf = (t) => `${t.type}:${t.id}`;
 
     // 현재 방은 기본 선택 (다른 방을 추가로 고르면 현재 방도 함께 전송됨).
     // 현재 방만 선택된 상태면 분기에서 단일 흐름으로 처리되므로 기본 동작은 그대로.
-    const curTarget = multiSendTargetsCache.find(t => t.isCurrent);
-    if (curTarget) multiSendSelKeys.add(keyOf(curTarget));
+    const curTarget = S.multiSendTargetsCache.find(t => t.isCurrent);
+    if (curTarget) S.multiSendSelKeys.add(keyOf(curTarget));
 
     const renderList = (query = '') => {
         const q = query.trim().toLowerCase();
-        const items = multiSendTargetsCache.filter(t => !q || t.name.toLowerCase().includes(q));
+        const items = S.multiSendTargetsCache.filter(t => !q || t.name.toLowerCase().includes(q));
         if (items.length === 0) {
             listEl.innerHTML = '<div class="sim-empty" style="padding:10px;">검색 결과가 없습니다.</div>';
             return;
         }
         listEl.innerHTML = items.map(t => {
             const k = keyOf(t);
-            const checked = multiSendSelKeys.has(k) ? ' checked' : '';
+            const checked = S.multiSendSelKeys.has(k) ? ' checked' : '';
             const cur = t.isCurrent ? ' <span class="sim-multisend-cur">(현재)</span>' : '';
             const icon = t.type === 'group' ? '👥 ' : '';
             return `<label class="sim-checkbox-label sim-multisend-item">
@@ -1995,16 +1963,16 @@ function setupMultiSendDrawer() {
         const on = e.target.checked;
         listEl.querySelectorAll('.sim-multisend-cb').forEach(cb => {
             cb.checked = on;
-            if (on) multiSendSelKeys.add(cb.dataset.key);
-            else multiSendSelKeys.delete(cb.dataset.key);
+            if (on) S.multiSendSelKeys.add(cb.dataset.key);
+            else S.multiSendSelKeys.delete(cb.dataset.key);
         });
     });
 
     listEl.addEventListener('change', (e) => {
         const cb = e.target.closest('.sim-multisend-cb');
         if (!cb) return;
-        if (cb.checked) multiSendSelKeys.add(cb.dataset.key);
-        else multiSendSelKeys.delete(cb.dataset.key);
+        if (cb.checked) S.multiSendSelKeys.add(cb.dataset.key);
+        else S.multiSendSelKeys.delete(cb.dataset.key);
     });
 }
 
@@ -2018,8 +1986,8 @@ function sameLocation(a, b) {
 
 /** 현재 선택된 대상 목록 반환 (검색 필터로 가려진 선택도 유지). */
 function getSelectedMultiSendTargets() {
-    if (!multiSendSelKeys || multiSendSelKeys.size === 0) return [];
-    return multiSendTargetsCache.filter(t => multiSendSelKeys.has(`${t.type}:${t.id}`));
+    if (!S.multiSendSelKeys || S.multiSendSelKeys.size === 0) return [];
+    return S.multiSendTargetsCache.filter(t => S.multiSendSelKeys.has(`${t.type}:${t.id}`));
 }
 
 /** 프롬프트 자동 저장(단일 흐름과 동일 규칙) — 다중 전송 시 1회만. */
@@ -2056,7 +2024,7 @@ function showMultiSendPanel(total) {
     </div>`;
     document.body.insertAdjacentHTML('beforeend', html);
     document.getElementById('sim-ms-stop')?.addEventListener('click', () => {
-        multiSendShouldStop = true;
+        S.multiSendShouldStop = true;
         try { stopSimGeneration(); } catch (e) { /* ignore */ }
         const s = document.getElementById('sim-ms-status');
         if (s) s.textContent = '중지 중... (현재 방 마무리)';
@@ -2081,17 +2049,17 @@ function hideMultiSendPanel() {
  * 각 방을 열어 → 시뮬 생성 → 그 방 메타데이터에 저장(즉시 flush) → 다음 방.
  */
 async function handleMultiSendSimulation(targets, opts) {
-    if (multiSendRunning || simGenerating) {
+    if (S.multiSendRunning || S.simGenerating) {
         if (typeof toastr !== 'undefined') toastr.warning('이미 생성이 진행 중입니다.', '시뮬 매니저');
         return;
     }
 
     maybeAutoSavePrompt(opts);
 
-    multiSendRunning = true;
-    multiSendShouldStop = false;
-    simGenerating = true; // 다른 시뮬 동작 차단
-    simAborted = false;
+    S.multiSendRunning = true;
+    S.multiSendShouldStop = false;
+    S.simGenerating = true; // 다른 시뮬 동작 차단
+    S.simAborted = false;
 
     const origin = captureCurrentLocation();
     closePopup();
@@ -2102,7 +2070,7 @@ async function handleMultiSendSimulation(targets, opts) {
     let originSimId = null; // 현재 방이 대상에 포함됐으면, 그 방에서 만든 시뮬 id
 
     for (let i = 0; i < targets.length; i++) {
-        if (multiSendShouldStop) break;
+        if (S.multiSendShouldStop) break;
         const target = targets[i];
 
         try {
@@ -2114,7 +2082,7 @@ async function handleMultiSendSimulation(targets, opts) {
                 throw new Error('채팅방 전환 확인 실패');
             }
 
-            if (multiSendShouldStop) break;
+            if (S.multiSendShouldStop) break;
             updateMultiSendPanel(i, targets.length, target.name, '시뮬 생성 중...');
 
             // {{char}}/{{user}} 가 이 방 기준으로 치환되도록 전환 후 재계산
@@ -2138,7 +2106,7 @@ async function handleMultiSendSimulation(targets, opts) {
                 runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolved, sim.injectPosition)
             );
 
-            if (simAborted || (multiSendShouldStop && !rawResponse)) {
+            if (S.simAborted || (S.multiSendShouldStop && !rawResponse)) {
                 // 생성 도중 중단 — 빈 시뮬 저장하지 않음
                 break;
             }
@@ -2173,7 +2141,7 @@ async function handleMultiSendSimulation(targets, opts) {
             await sleep(600);
         }
 
-        if (i < targets.length - 1 && !multiSendShouldStop) await sleep(800);
+        if (i < targets.length - 1 && !S.multiSendShouldStop) await sleep(800);
     }
 
     // 원래 방으로 복귀
@@ -2186,10 +2154,10 @@ async function handleMultiSendSimulation(targets, opts) {
         console.error(DEBUG_PREFIX, 'restore origin failed:', e);
     }
 
-    simGenerating = false;
-    multiSendRunning = false;
-    multiSendShouldStop = false;
-    simAborted = false;
+    S.simGenerating = false;
+    S.multiSendRunning = false;
+    S.multiSendShouldStop = false;
+    S.simAborted = false;
     hideMultiSendPanel();
 
     // 현재 방이 대상에 포함됐고 복귀에 성공했으면, 그 방 시뮬을 디테일 뷰로 자동 오픈
@@ -2213,7 +2181,7 @@ async function handleMultiSendSimulation(targets, opts) {
 }
 
 async function handleRegenerateSimulation(sim) {
-    if (simGenerating) return;
+    if (S.simGenerating) return;
     const resolvedPrompt = substituteParams(getEffectivePromptText(sim));
 
     enterSimGeneratingMode('sim-regenerate');
@@ -2227,15 +2195,15 @@ async function handleRegenerateSimulation(sim) {
         );
         // 생성 후에 live sim 을 다시 찾아서 push (preset 전환 중 chat_metadata 가 바뀌었을 수 있음)
         const liveSims = getSimulations();
-        const targetSim = (tempSim && tempSim.id === simId) ? tempSim : liveSims.find(s => s.id === simId) || sim;
+        const targetSim = (S.tempSim && S.tempSim.id === simId) ? S.tempSim : liveSims.find(s => s.id === simId) || sim;
         if (!Array.isArray(targetSim.responses)) targetSim.responses = [];
         targetSim.responses.push(rawResponse);
         targetSim.currentIndex = targetSim.responses.length - 1;
-        if (!tempSim || tempSim.id !== simId) saveSimulations();
+        if (!S.tempSim || S.tempSim.id !== simId) saveSimulations();
 
         showSimNotification(targetSim);
     } catch (err) {
-        if (simAborted) {
+        if (S.simAborted) {
             toastr.info('답변 재생성을 취소했습니다.', '시뮬 매니저');
         } else {
             console.error(DEBUG_PREFIX, 'Regeneration failed:', err);
@@ -2243,14 +2211,14 @@ async function handleRegenerateSimulation(sim) {
         }
     } finally {
         exitSimGeneratingMode();
-        if (currentView === 'detail' && currentSimId === simId) {
+        if (S.currentView === 'detail' && S.currentSimId === simId) {
             renderDetailView();
         }
     }
 }
 
 async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
-    if (simGenerating) return;
+    if (S.simGenerating) return;
     const currentResponse = sim.responses[responseIdx];
     if (!currentResponse) {
         toastr.warning('이어쓸 응답이 없습니다.', '시뮬 매니저');
@@ -2275,7 +2243,7 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
         let target = sim;
         if (!isGlobal) {
             const liveSims = getSimulations();
-            target = (tempSim && tempSim.id === sim.id) ? tempSim : liveSims.find(s => s.id === sim.id) || sim;
+            target = (S.tempSim && S.tempSim.id === sim.id) ? S.tempSim : liveSims.find(s => s.id === sim.id) || sim;
         }
         // continuations 배열에 파트 분리 저장
         if (!target.continuations) target.continuations = {};
@@ -2289,12 +2257,12 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
         if (isGlobal) {
             saveSettingsDebounced();
         } else {
-            if (!tempSim || tempSim.id !== target.id) saveSimulations();
+            if (!S.tempSim || S.tempSim.id !== target.id) saveSimulations();
         }
 
         toastr.success('응답이 이어쓰기되었습니다.', '시뮬 매니저');
     } catch (err) {
-        if (simAborted) {
+        if (S.simAborted) {
             toastr.info('이어쓰기를 취소했습니다.', '시뮬 매니저');
         } else {
             console.error(DEBUG_PREFIX, 'Continue failed:', err);
@@ -2303,9 +2271,9 @@ async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
     } finally {
         exitSimGeneratingMode();
         if (isGlobal) {
-            if (currentView === 'globalDetail') renderGlobalDetailView();
+            if (S.currentView === 'globalDetail') renderGlobalDetailView();
         } else {
-            if (currentView === 'detail' && currentSimId === sim.id) renderDetailView();
+            if (S.currentView === 'detail' && S.currentSimId === sim.id) renderDetailView();
         }
     }
 }
@@ -2445,7 +2413,7 @@ ${feedback}
 You are an editor. Rewrite ONLY the original_message above based on the feedback. Do NOT roleplay. Do NOT continue the story. Begin the revised text now:`;
 
         try {
-            simAborted = false;
+            S.simAborted = false;
             const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
                 withSimIntercept(
                     { kind: '통제광 (파트 수정)', position: SIM_POSITIONS.BOTTOM },
@@ -2455,7 +2423,7 @@ You are an editor. Rewrite ONLY the original_message above based on the feedback
             let target = sim;
             if (!isGlobal) {
                 const liveSims = getSimulations();
-                target = (tempSim && tempSim.id === sim.id) ? tempSim : liveSims.find(s => s.id === sim.id) || sim;
+                target = (S.tempSim && S.tempSim.id === sim.id) ? S.tempSim : liveSims.find(s => s.id === sim.id) || sim;
             }
             // 해당 파트를 교체
             if (partIdx === 0) {
@@ -2470,12 +2438,12 @@ You are an editor. Rewrite ONLY the original_message above based on the feedback
                 saveSettingsDebounced();
                 renderGlobalDetailView();
             } else {
-                if (!tempSim || tempSim.id !== target.id) saveSimulations();
+                if (!S.tempSim || S.tempSim.id !== target.id) saveSimulations();
                 renderDetailView();
             }
             toastr.success('파트가 수정되었습니다.', '통제광');
         } catch (err) {
-            if (simAborted) {
+            if (S.simAborted) {
                 toastr.info('수정 요청을 취소했습니다.', '통제광');
             } else {
                 console.error(DEBUG_PREFIX, 'Part revision failed:', err);
@@ -2744,8 +2712,6 @@ function showSimNotification(sim) {
 // ============================================
 // Settings Panel
 // ============================================
-let selectedPromptId = null;
-
 function renderSettingsSavedPrompts() {
     ensureSettings();
     const select = document.getElementById('sim-prompt-select');
@@ -2758,13 +2724,13 @@ function renderSettingsSavedPrompts() {
 
     let options = '<option value="">-- 새로 생성하기 --</option>';
     for (const p of prompts) {
-        const selected = selectedPromptId === p.id ? 'selected' : '';
+        const selected = S.selectedPromptId === p.id ? 'selected' : '';
         options += `<option value="${p.id}" ${selected}>${escapeHtml(p.name)}</option>`;
     }
     select.innerHTML = options;
 
-    if (selectedPromptId) {
-        const found = prompts.find(p => p.id === selectedPromptId);
+    if (S.selectedPromptId) {
+        const found = prompts.find(p => p.id === S.selectedPromptId);
         if (found && nameInput && contentInput) {
             nameInput.value = found.name;
             contentInput.value = found.content;
@@ -2794,12 +2760,12 @@ function bindSettingsEvents() {
             }
         }
         select.innerHTML = options;
-        selectedPromptId = null;
+        S.selectedPromptId = null;
         renderSettingsSavedPrompts();
     });
 
     select?.addEventListener('change', () => {
-        selectedPromptId = select.value || null;
+        S.selectedPromptId = select.value || null;
         renderSettingsSavedPrompts();
     });
 
@@ -2817,8 +2783,8 @@ function bindSettingsEvents() {
         ensureSettings();
         const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
 
-        if (selectedPromptId) {
-            const found = prompts.find(p => p.id === selectedPromptId);
+        if (S.selectedPromptId) {
+            const found = prompts.find(p => p.id === S.selectedPromptId);
             if (found) {
                 found.name = name;
                 found.content = content;
@@ -2826,7 +2792,7 @@ function bindSettingsEvents() {
         } else {
             const newId = `prompt_${uuidv4()}`;
             prompts.push({ id: newId, name, content });
-            selectedPromptId = newId;
+            S.selectedPromptId = newId;
         }
 
         saveSettingsDebounced();
@@ -2835,31 +2801,31 @@ function bindSettingsEvents() {
     });
 
     deleteBtn?.addEventListener('click', () => {
-        if (!selectedPromptId) return;
+        if (!S.selectedPromptId) return;
         if (!confirm('이 프롬프트를 삭제하시겠습니까?')) return;
 
         ensureSettings();
         const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
-        const idx = prompts.findIndex(p => p.id === selectedPromptId);
+        const idx = prompts.findIndex(p => p.id === S.selectedPromptId);
         if (idx !== -1) {
             prompts.splice(idx, 1);
             saveSettingsDebounced();
         }
-        selectedPromptId = null;
+        S.selectedPromptId = null;
         renderSettingsSavedPrompts();
         if (typeof toastr !== 'undefined') toastr.info('삭제되었습니다.', '시뮬 매니저');
     });
 
     // 프롬프트 관리 버튼
     document.getElementById('sim-open-prompt-manager-btn')?.addEventListener('click', () => {
-        currentView = 'promptManager';
+        S.currentView = 'promptManager';
         openPopup();
         renderPromptManagerView();
     });
 
     // 모아보기 버튼
     document.getElementById('sim-global-viewer-btn')?.addEventListener('click', async () => {
-        currentView = 'globalList';
+        S.currentView = 'globalList';
         openPopup();
 
         ensureSettings();
@@ -2894,16 +2860,13 @@ function bindSettingsEvents() {
 // ============================================
 // Navigation Helpers
 // ============================================
-let lastRenderedView = null;
-let lastRenderedSimId = null;
-
 // 뷰 전환 시에만 sim-content 스크롤을 맨 위로. 같은 뷰의 인-플레이스 재렌더는 스크롤 보존.
 function maybeResetContentScroll(viewKey, simId = null) {
-    if (lastRenderedView !== viewKey || lastRenderedSimId !== simId) {
+    if (S.lastRenderedView !== viewKey || S.lastRenderedSimId !== simId) {
         const container = document.getElementById('sim-content');
         if (container) container.scrollTop = 0;
-        lastRenderedView = viewKey;
-        lastRenderedSimId = simId;
+        S.lastRenderedView = viewKey;
+        S.lastRenderedSimId = simId;
     }
 }
 
@@ -3036,12 +2999,12 @@ function renderPromptEditView(promptId) {
 }
 
 function goToList() {
-    currentView = 'list';
-    currentSimId = null;
-    tempSim = null;
-    isEditingPrompt = false;
-    isEditingTitle = false;
-    editingPartIdx = null;
+    S.currentView = 'list';
+    S.currentSimId = null;
+    S.tempSim = null;
+    S.isEditingPrompt = false;
+    S.isEditingTitle = false;
+    S.editingPartIdx = null;
     renderListView();
 }
 
@@ -3061,7 +3024,7 @@ function openPopup() {
         popup.classList.add('active');
         fixMobileHeight();
         // globalList인 경우 renderGlobalListView가 별도 호출됨
-        if (currentView !== 'globalList' && currentView !== 'globalSimList' && currentView !== 'globalDetail') {
+        if (S.currentView !== 'globalList' && S.currentView !== 'globalSimList' && S.currentView !== 'globalDetail') {
             renderListView();
         }
     }
@@ -3092,10 +3055,10 @@ if (window.visualViewport) {
 }
 
 function openPopupToSim(simId) {
-    currentSimId = simId;
-    currentView = 'detail';
-    isEditingPrompt = false;
-    isEditingTitle = false;
+    S.currentSimId = simId;
+    S.currentView = 'detail';
+    S.isEditingPrompt = false;
+    S.isEditingTitle = false;
     openPopup();
     renderDetailView();
 }
@@ -3135,19 +3098,19 @@ function renderResponseParts(sim, responseIdx, currentEditPart = null, isGlobal 
         // 파트별 번역 텍스트 확인
         const partTranslations = sim.partTranslations?.[String(responseIdx)];
         const hasTranslation = partTranslations?.[String(partIdx)];
-        const displayText = (showTranslated && hasTranslation) ? hasTranslation : part;
+        const displayText = (S.showTranslated && hasTranslation) ? hasTranslation : part;
 
         // 액션 버튼
         ensureSettings();
         const translationOn = extension_settings[EXTENSION_NAME].translationEnabled;
-        const isThisPartTranslating = isTranslating && translatingPartIdx === partIdx;
+        const isThisPartTranslating = S.isTranslating && S.translatingPartIdx === partIdx;
         let translateBtn = '';
         if (translationOn) {
             if (isThisPartTranslating) {
                 translateBtn = `<button class="sim-btn-icon sim-btn-icon-sm" disabled><i class="fa-solid fa-spinner fa-spin"></i> 번역 중</button>`;
             } else if (hasTranslation) {
                 translateBtn = `
-                    <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-translate" data-part="${partIdx}" title="${showTranslated ? '원문 보기' : '번역 보기'}"><i class="fa-solid fa-language"></i> ${showTranslated ? '원문' : '번역'}</button>
+                    <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-translate" data-part="${partIdx}" title="${S.showTranslated ? '원문 보기' : '번역 보기'}"><i class="fa-solid fa-language"></i> ${S.showTranslated ? '원문' : '번역'}</button>
                     <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-retranslate" data-part="${partIdx}" title="재번역"><i class="fa-solid fa-rotate-right"></i> 재번역</button>`;
             } else {
                 translateBtn = `<button class="sim-btn-icon sim-btn-icon-sm" data-action="part-translate" data-part="${partIdx}" title="번역"><i class="fa-solid fa-language"></i></button>`;
@@ -3177,7 +3140,7 @@ function getPartText(sim, responseIdx, partIdx) {
     const parts = [base, ...conts];
     const original = parts[partIdx] || '';
     const translated = sim.partTranslations?.[String(responseIdx)]?.[String(partIdx)];
-    return (showTranslated && translated) ? translated : original;
+    return (S.showTranslated && translated) ? translated : original;
 }
 
 // ============================================
@@ -3285,7 +3248,7 @@ function getPartText(sim, responseIdx, partIdx) {
             transToggle.addEventListener('change', () => {
                 extension_settings[EXTENSION_NAME].translationEnabled = transToggle.checked;
                 if (transSettings) transSettings.style.display = transToggle.checked ? '' : 'none';
-                if (!transToggle.checked) showTranslated = false;
+                if (!transToggle.checked) S.showTranslated = false;
                 saveSettingsDebounced();
             });
         }
@@ -3341,7 +3304,7 @@ function getPartText(sim, responseIdx, partIdx) {
     if (wandMenu) {
         wandMenu.insertAdjacentHTML('beforeend', buildWandButtonHTML());
         document.getElementById('sim-manager-wand-btn')?.addEventListener('click', () => {
-            currentView = 'list';
+            S.currentView = 'list';
             openPopup();
             wandMenu.style.display = 'none';
         });
@@ -3349,9 +3312,9 @@ function getPartText(sim, responseIdx, partIdx) {
 
     // 4. 채팅 변경 시 뷰 초기화 + 글로벌 동기화
     eventSource.on(event_types.CHAT_CHANGED, () => {
-        currentView = 'list';
-        currentSimId = null;
-        isEditingPrompt = false;
+        S.currentView = 'list';
+        S.currentSimId = null;
+        S.isEditingPrompt = false;
 
         // 새 채팅 로드 후 글로벌 동기화
         setTimeout(() => {
