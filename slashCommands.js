@@ -52,27 +52,70 @@ function positionEnumProvider() {
         new SlashCommandEnumValue(v, label, enumTypes.enum));
 }
 
-/**
- * 이름으로 저장된 프롬프트 찾기. 정확히 일치 → 대소문자 무시 → 부분 일치 순.
- */
-function findSavedPrompt(name) {
+/** 이름이 정확히(대소문자 무시) 일치하는 저장 프롬프트. */
+function findSavedPromptExact(name) {
     ensureSettings();
     const prompts = extension_settings[EXTENSION_NAME].savedPrompts || [];
     const q = String(name).trim();
     const lower = q.toLowerCase();
     return prompts.find(p => p.name === q)
         ?? prompts.find(p => p.name.toLowerCase() === lower)
-        ?? prompts.find(p => p.id === q)
+        ?? null;
+}
+
+/**
+ * 이름으로 저장된 프롬프트 찾기. 정확히 일치 → id → 부분 일치 순.
+ */
+function findSavedPrompt(name) {
+    const exact = findSavedPromptExact(name);
+    if (exact) return exact;
+
+    ensureSettings();
+    const prompts = extension_settings[EXTENSION_NAME].savedPrompts || [];
+    const q = String(name).trim();
+    const lower = q.toLowerCase();
+    return prompts.find(p => p.id === q)
         ?? prompts.find(p => p.name.toLowerCase().includes(lower))
         ?? null;
 }
 
+/**
+ * 이름이 실제 존재하는 프리셋인지 (대소문자 무시).
+ * 프리셋 목록을 못 가져오는 상황(비 chat-completion API, 매니저 미준비)에서는
+ * 판단을 포기하고 null 을 돌려준다 — 멀쩡한 이름을 잘못 걸러내지 않기 위해서다.
+ * @returns {boolean|null}
+ */
+function isKnownPreset(name) {
+    const q = String(name).trim().toLowerCase();
+    if (!q) return false;
+    const names = getAvailablePresetNames();
+    if (!names.length) return null;
+    return names.some(n => String(n).toLowerCase() === q);
+}
+
 async function simCallback(args, unnamed) {
-    const inlineText = normalizePromptText(String(unnamed ?? '').trim());
-    const promptName = String(args?.name ?? '').trim();
+    let inlineText = normalizePromptText(String(unnamed ?? '').trim());
+    let promptName = String(args?.name ?? '').trim();
+    let presetName = String(args?.preset ?? '').trim();
     const quiet = isTrueBoolean(String(args?.quiet ?? 'false'));
     const open = isTrueBoolean(String(args?.open ?? 'false'));
     const returnType = String(args?.return ?? 'none');
+
+    // 자동완성이 공백 있는 값을 따옴표 없이 넣어버리는 경우가 있다.
+    //   /sim name=던전 시뮬  →  파서가 name="던전" + 이름없는 인자 "시뮬" 로 쪼갬
+    // 잘린 값과 뒤따라온 텍스트를 다시 붙여서 실제 이름으로 해석되면 그쪽을 택한다.
+    // (손으로 따옴표 없이 친 경우도 같이 구제된다)
+    if (inlineText && promptName
+        && !findSavedPromptExact(promptName)
+        && findSavedPromptExact(`${promptName} ${inlineText}`)) {
+        promptName = `${promptName} ${inlineText}`;
+        inlineText = '';
+    } else if (inlineText && presetName
+        && !isKnownPreset(presetName)
+        && isKnownPreset(`${presetName} ${inlineText}`)) {
+        presetName = `${presetName} ${inlineText}`;
+        inlineText = '';
+    }
 
     if (!inlineText && !promptName) {
         !quiet && toastr.warning('프롬프트 이름(name=) 이나 시뮬 내용을 넣어주세요.', '시뮬 매니저');
@@ -100,9 +143,9 @@ async function simCallback(args, unnamed) {
         customTitle = found.name;
     }
 
-    const presetName = String(args?.preset ?? '').trim();
     const position = String(args?.position ?? '').trim() || getDefaultInjectPosition();
 
+    // 없는 프리셋 이름은 withSimulationPreset 이 경고하고 현재 프리셋으로 진행한다. 여기서 또 막지 않는다.
     console.log(DEBUG_PREFIX, '/sim 실행:', { promptName, position, presetName, open, returnType });
 
     const result = await sendSimulation({
@@ -138,6 +181,10 @@ export function registerSlashCommands() {
             </div>
             <div>
                 즉석 프롬프트는 저장된 프롬프트 목록에 자동 추가되지 않습니다.
+            </div>
+            <div>
+                이름에 공백이 있으면 <code>name="던전 시뮬"</code> 처럼 따옴표로 감싸는 게 정확합니다.
+                따옴표가 빠져도 저장된 이름과 맞으면 알아서 붙여 해석합니다.
             </div>
             <div><strong>예시:</strong></div>
             <ul>
