@@ -132,24 +132,18 @@ export async function handleSendSimulation() {
     const chosenPresetName = document.getElementById('sim-preset-select')?.value || '';
     const chosenTogglePresetName = document.getElementById('sim-toggle-preset-select')?.value || '';
 
-    // 스왑 먼저 적용한 뒤 substituteParams
-    const resolvedPrompt = substituteParams(applySwap(rawPrompt, chosenSwapCharUser, chosenSwapPronouns));
-
-    // 프롬프트 이름 결정
-    ensureSettings();
-    const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
-    const matchedPrompt = savedPrompts.find(p => p.content === rawPrompt);
-    const promptName = customTitle || (matchedPrompt ? matchedPrompt.name : '');
-
     // 다중 전송 분기: 현재 방 외에 다른 방이 하나라도 포함됐을 때만 다중 흐름.
     // (드로어 미사용 = 현재 방만 선택된 상태 → 기존 단일 인터랙티브 흐름 유지)
     const multiTargets = getSelectedMultiSendTargets();
     const curLoc = captureCurrentLocation();
     const onlyCurrent = multiTargets.length === 1 && sameLocation(multiTargets[0], curLoc);
     if (multiTargets.length > 0 && !onlyCurrent) {
+        ensureSettings();
+        const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+        const matchedPrompt = savedPrompts.find(p => p.content === rawPrompt);
         await handleMultiSendSimulation(multiTargets, {
             rawPrompt,
-            promptName,
+            promptName: customTitle || (matchedPrompt ? matchedPrompt.name : ''),
             customTitle,
             noSavePrompt,
             loadedPromptId,
@@ -162,24 +156,82 @@ export async function handleSendSimulation() {
         return;
     }
 
+    await sendSimulation({
+        rawPrompt,
+        customTitle,
+        noSave,
+        noSavePrompt,
+        loadedPromptId,
+        chosenPosition,
+        chosenSwapCharUser,
+        chosenSwapPronouns,
+        chosenPresetName,
+        chosenTogglePresetName,
+    });
+}
+
+/**
+ * 시뮬 생성 코어. DOM 을 읽지 않고 인자만으로 동작한다.
+ * 작성 화면 전송(handleSendSimulation)과 슬래시 명령(/sim)이 공유한다.
+ *
+ * @param {object} opts
+ * @param {string} opts.rawPrompt               시뮬 프롬프트 원문 (스왑/치환 전)
+ * @param {string} [opts.customTitle='']        사용자가 지정한 제목
+ * @param {boolean} [opts.noSave=false]         true 면 목록에 저장하지 않고 임시 sim 으로만
+ * @param {boolean} [opts.noSavePrompt=false]   true 면 보낸 프롬프트를 저장 목록에 추가하지 않음
+ * @param {string} [opts.loadedPromptId='']     불러온 저장 프롬프트 id (제목 변경 감지용)
+ * @param {string} [opts.chosenPosition]        SIM_POSITIONS.* 주입 위치
+ * @param {boolean} [opts.chosenSwapCharUser=false]
+ * @param {boolean} [opts.chosenSwapPronouns=false]
+ * @param {string} [opts.chosenPresetName='']
+ * @param {string} [opts.chosenTogglePresetName='']
+ * @param {boolean} [opts.ui=true]              뷰 전환·작성화면 복원 등 팝업 UI 를 건드릴지.
+ *                                              슬래시 백그라운드 실행은 false.
+ * @param {boolean} [opts.notify=true]          완료 토스트를 띄울지
+ * @returns {Promise<{sim: object, text: string}|null>} 실패·취소 시 null
+ */
+export async function sendSimulation({
+    rawPrompt,
+    customTitle = '',
+    noSave = false,
+    noSavePrompt = false,
+    loadedPromptId = '',
+    chosenPosition = undefined,
+    chosenSwapCharUser = false,
+    chosenSwapPronouns = false,
+    chosenPresetName = '',
+    chosenTogglePresetName = '',
+    ui = true,
+    notify = true,
+}) {
+    chosenPosition = normalizeSimPosition(chosenPosition);
+
+    // 스왑 먼저 적용한 뒤 substituteParams
+    const resolvedPrompt = substituteParams(applySwap(rawPrompt, chosenSwapCharUser, chosenSwapPronouns));
+
+    // 프롬프트 이름 결정
+    ensureSettings();
+    const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const matchedPrompt = savedPrompts.find(p => p.content === rawPrompt);
+    const promptName = customTitle || (matchedPrompt ? matchedPrompt.name : '');
+
     const sims = getSimulations();
-    let sim = null;
+    const isTemp = noSave;
+    const sim = {
+        id: isTemp ? `temp_${uuidv4()}` : `sim_${uuidv4()}`,
+        promptText: rawPrompt,
+        promptName: promptName,
+        responses: [],
+        currentIndex: 0,
+        createdAt: Date.now(),
+        presetName: chosenPresetName,
+        togglePresetName: chosenTogglePresetName,
+        injectPosition: chosenPosition,
+        swapCharUser: chosenSwapCharUser,
+        swapPronouns: chosenSwapPronouns,
+    };
 
-    if (!noSave) {
-        sim = {
-            id: `sim_${uuidv4()}`,
-            promptText: rawPrompt,
-            promptName: promptName,
-            responses: [],
-            currentIndex: 0,
-            createdAt: Date.now(),
-            presetName: chosenPresetName,
-            togglePresetName: chosenTogglePresetName,
-            injectPosition: chosenPosition,
-            swapCharUser: chosenSwapCharUser,
-            swapPronouns: chosenSwapPronouns,
-        };
-
+    if (!isTemp) {
         sims.push(sim);
         saveSimulations();
 
@@ -199,27 +251,12 @@ export async function handleSendSimulation() {
                 renderSettingsSavedPrompts();
             }
         }
+    }
 
+    // 팝업을 쓰는 흐름에서만 상세 뷰로 전환한다. 슬래시 백그라운드 실행은 화면을 건드리지 않음.
+    if (ui) {
+        if (isTemp) S.tempSim = sim;   // 저장 안 하기 모드: 메모리에만 있는 임시 sim
         S.currentSimId = sim.id;
-        S.currentView = 'detail';
-        S.isEditingPrompt = false;
-        renderDetailView();
-    } else {
-        // 저장 안 하기 모드: 임시 sim 객체 (메모리에만)
-        S.currentSimId = `temp_${uuidv4()}`;
-        S.tempSim = {
-            id: S.currentSimId,
-            promptText: rawPrompt,
-            promptName: promptName,
-            responses: [],
-            currentIndex: 0,
-            createdAt: Date.now(),
-            presetName: chosenPresetName,
-            togglePresetName: chosenTogglePresetName,
-            injectPosition: chosenPosition,
-            swapCharUser: chosenSwapCharUser,
-            swapPronouns: chosenSwapPronouns,
-        };
         S.currentView = 'detail';
         S.isEditingPrompt = false;
         renderDetailView();
@@ -229,25 +266,23 @@ export async function handleSendSimulation() {
     try {
         console.log(DEBUG_PREFIX, 'Generating simulation response...');
 
-        // 현재 처리 중인 sim 의 injectPosition 사용 + 프리셋/토글 프리셋 임시 적용
-        const activeSim = (S.tempSim && S.tempSim.id === S.currentSimId) ? S.tempSim : sims.find(s => s.id === S.currentSimId) || sim;
+        // sim 의 injectPosition 사용 + 프리셋/토글 프리셋 임시 적용
         const rawResponse = await withSimulationPreset(chosenPresetName, chosenTogglePresetName, () =>
             withSimIntercept(
-                { kind: '새 시뮬 전송', position: activeSim?.injectPosition },
-                () => runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, activeSim?.injectPosition))
+                { kind: ui ? '새 시뮬 전송' : '/sim 전송', position: sim.injectPosition },
+                () => runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, sim.injectPosition))
         );
         console.log(DEBUG_PREFIX, 'Raw response length:', rawResponse?.length);
 
-        // noSave 모드에서는 S.tempSim 사용
-        const targetSim = (S.tempSim && S.tempSim.id === S.currentSimId) ? S.tempSim : sims.find(s => s.id === S.currentSimId) || sim;
+        // 생성 중에 시뮬 배열이 갈렸을 수 있으니 저장형은 id 로 다시 잡는다
+        const targetSim = isTemp ? sim : (sims.find(s => s.id === sim.id) || sim);
         targetSim.responses.push(rawResponse);
         targetSim.currentIndex = 0;
-        if (!S.tempSim || S.tempSim.id !== S.currentSimId) {
-            saveSimulations();
-        }
+        if (!isTemp) saveSimulations();
 
-        showSimNotification(targetSim);
+        if (notify) showSimNotification(targetSim);
         console.log(DEBUG_PREFIX, 'Simulation response received.');
+        return { sim: targetSim, text: rawResponse };
     } catch (err) {
         if (S.simAborted) {
             toastr.info('시뮬레이션 생성을 취소했습니다.', '시뮬 매니저');
@@ -255,28 +290,42 @@ export async function handleSendSimulation() {
             console.error(DEBUG_PREFIX, 'Generation failed:', err);
             toastr.error('시뮬레이션 생성에 실패했습니다.', '시뮬 매니저');
         }
-        // 방금 만든 시뮬이 응답 하나 없이 끝났으면 되돌리고 작성 화면으로 복귀
-        if (discardEmptyNewSim()) {
-            S.pendingCreateDraft = {
-                rawPrompt,
-                customTitle,
-                chosenPresetName,
-                chosenTogglePresetName,
-                chosenPosition,
-                chosenSwapCharUser,
-                chosenSwapPronouns,
-                noSavePrompt,
-                loadedPromptId,
-            };
-            S.currentView = 'create';
-            S.isEditingPrompt = false;
+
+        if (ui) {
+            // 방금 만든 시뮬이 응답 하나 없이 끝났으면 되돌리고 작성 화면으로 복귀
+            if (discardEmptyNewSim()) {
+                S.pendingCreateDraft = {
+                    rawPrompt,
+                    customTitle,
+                    chosenPresetName,
+                    chosenTogglePresetName,
+                    chosenPosition,
+                    chosenSwapCharUser,
+                    chosenSwapPronouns,
+                    noSavePrompt,
+                    loadedPromptId,
+                };
+                S.currentView = 'create';
+                S.isEditingPrompt = false;
+            }
+        } else if (!isTemp && !sim.responses.length) {
+            // 백그라운드 실행은 S.currentSimId 를 안 쓰므로 직접 롤백
+            const live = getSimulations();
+            const idx = live.findIndex(s => s.id === sim.id);
+            if (idx !== -1) {
+                live.splice(idx, 1);
+                saveSimulations();
+            }
         }
+        return null;
     } finally {
         exitSimGeneratingMode();
-        if (S.currentView === 'create') {
-            renderCreateView();
-        } else if (S.currentView === 'detail') {
-            renderDetailView();
+        if (ui) {
+            if (S.currentView === 'create') {
+                renderCreateView();
+            } else if (S.currentView === 'detail') {
+                renderDetailView();
+            }
         }
     }
 }

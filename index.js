@@ -50,6 +50,7 @@ import {
     bindSettingsEvents,
     renderSettingsSavedPrompts,
 } from './settingsPanel.js';
+import { registerSlashCommands } from './slashCommands.js';
 import {
     applyBranding,
     buildPopupHTML,
@@ -243,6 +244,13 @@ import {
 
     // 5. 채팅 메시지 → 시뮬로 저장 버튼
     setupMessageCapture();
+
+    // 6. 슬래시 명령 (/sim) — Quick Reply 에서 버튼 하나로 쓰기 위한 진입점
+    try {
+        registerSlashCommands();
+    } catch (e) {
+        console.error(DEBUG_PREFIX, 'Failed to register slash commands:', e);
+    }
 
     console.log(DEBUG_PREFIX, 'Simulation Manager loaded successfully.');
 })();
