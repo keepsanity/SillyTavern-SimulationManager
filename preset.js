@@ -71,10 +71,12 @@ function findPresetValue(pm, name) {
     if (!el?.options) return undefined;
     const target = collapseWs(name);
     if (!target) return undefined;
-    for (const opt of el.options) {
-        if (collapseWs(opt.textContent) === target) return opt.value;
-    }
-    return undefined;
+    const opts = [...el.options];
+    const hit = opts.find(o => collapseWs(o.textContent) === target)
+        // resolvePresetName 이 대소문자를 무시하므로 여기서도 맞춰준다.
+        // (안 맞추면 "존재한다고 판정 -> 전환은 실패" 하는 엇갈림이 생긴다)
+        ?? opts.find(o => collapseWs(o.textContent).toLowerCase() === target.toLowerCase());
+    return hit?.value;
 }
 
 export function getAvailablePresetNames() {
@@ -92,10 +94,24 @@ export function isCustomPresetTogglesEnabled() {
     return !!(s && s.showTogglePresetFeature);
 }
 
+/**
+ * CustomPreset 확장의 저장소는 ST 원본 프리셋 이름(oai_settings.preset_settings_openai)으로
+ * 키가 잡혀 있다. 반면 우리가 들고 있는 이름은 목록에서 온 '공백 접힌' 이름일 수 있어서
+ * 그대로 인덱싱하면 조용히 빗나간다. 원래 키를 되찾아준다.
+ */
+function resolveStorageKey(obj, presetName) {
+    if (!obj || !presetName) return null;
+    if (Object.prototype.hasOwnProperty.call(obj, presetName)) return presetName;
+    const target = collapseWs(presetName);
+    if (!target) return null;
+    return Object.keys(obj).find(k => collapseWs(k) === target) ?? null;
+}
+
 function getTogglePresetMap(presetName) {
     const s = extension_settings[CUSTOM_PRESET_EXT];
     if (!s || !s.togglePresets || !presetName) return null;
-    const map = s.togglePresets[presetName];
+    const key = resolveStorageKey(s.togglePresets, presetName);
+    const map = key ? s.togglePresets[key] : null;
     return (map && typeof map === 'object') ? map : null;
 }
 
@@ -110,7 +126,8 @@ export function getTogglePresetNames(presetName) {
 export function getCurrentActiveTogglePresetName(presetName) {
     const s = extension_settings[CUSTOM_PRESET_EXT];
     if (!s || !s.activeTogglePreset || !presetName) return 'default';
-    return s.activeTogglePreset[presetName] || 'default';
+    const key = resolveStorageKey(s.activeTogglePreset, presetName);
+    return (key ? s.activeTogglePreset[key] : '') || 'default';
 }
 
 function captureToggleSnapshot() {
