@@ -13,6 +13,70 @@ function getOpenAiPresetManager() {
     return getPresetManager('openai');
 }
 
+/** 연속 공백을 한 칸으로 접고 양끝을 자른다. */
+function collapseWs(s) {
+    return String(s ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** 프리셋 셀렉트의 DOM 엘리먼트. PresetManager.select 는 jQuery 객체다. */
+function getPresetSelectEl(pm) {
+    const s = pm?.select;
+    if (!s) return null;
+    if (typeof s === 'string') return document.querySelector(s);
+    if (typeof HTMLSelectElement !== 'undefined' && s instanceof HTMLSelectElement) return s;
+    return s[0] ?? null;
+}
+
+/**
+ * 프리셋 이름 두 개가 같은 프리셋을 가리키는지.
+ * ST 코어가 이름을 얻는 경로마다 공백 처리가 달라서(findPresetValue 주석 참고)
+ * 연속 공백은 무시하고 비교한다.
+ */
+export function isSamePresetName(a, b) {
+    if (a === b) return true;
+    const ca = collapseWs(a);
+    return !!ca && ca === collapseWs(b);
+}
+
+/**
+ * 실제 존재하는 프리셋 이름으로 정규화. 못 찾으면 null.
+ * 목록을 못 가져오는 상황(비 chat-completion API 등)에서도 null.
+ */
+export function resolvePresetName(name) {
+    const q = String(name ?? '').trim();
+    if (!q) return null;
+    const names = getAvailablePresetNames();
+    if (!names.length) return null;
+    if (names.includes(q)) return q;
+    const target = collapseWs(q).toLowerCase();
+    return names.find(n => collapseWs(n).toLowerCase() === target) ?? null;
+}
+
+/**
+ * 프리셋 이름 -> <option> value.
+ *
+ * ST 코어가 같은 <option> 에서 이름을 서로 다른 방식으로 읽는다:
+ *   getAllPresets()  ->  el.text       (HTMLOptionElement.text 게터: 연속 공백을 한 칸으로 접음)
+ *   findPreset(name) ->  $(el).text()  (textContent: 원본 그대로)
+ * 그래서 이름에 공백이 두 칸 이상 들어간 프리셋은
+ * "목록에서 고른 이름"으로 findPreset 을 하면 영영 못 찾는다.
+ * (예: "... Gemini Pro  1.9" 는 목록에 "... Gemini Pro 1.9" 로 나옴)
+ * 코어를 건드리지 않고 여기서 공백을 접어 한 번 더 대조한다.
+ */
+function findPresetValue(pm, name) {
+    const direct = pm.findPreset(name);
+    if (direct !== undefined && direct !== null) return direct;
+
+    const el = getPresetSelectEl(pm);
+    if (!el?.options) return undefined;
+    const target = collapseWs(name);
+    if (!target) return undefined;
+    for (const opt of el.options) {
+        if (collapseWs(opt.textContent) === target) return opt.value;
+    }
+    return undefined;
+}
+
 export function getAvailablePresetNames() {
     const pm = getOpenAiPresetManager();
     if (!pm) return [];
@@ -85,9 +149,9 @@ function applyToggleSnapshot(snapshot) {
 async function switchPresetTo(presetName) {
     const pm = getOpenAiPresetManager();
     if (!pm) return false;
-    const value = pm.findPreset(presetName);
+    const value = findPresetValue(pm, presetName);
     if (value === undefined || value === null) return false;
-    if (pm.getSelectedPresetName() === presetName) return true;
+    if (isSamePresetName(pm.getSelectedPresetName(), presetName)) return true;
     const done = new Promise(resolve => {
         const onAfter = () => { eventSource.removeListener(event_types.OAI_PRESET_CHANGED_AFTER, onAfter); resolve(); };
         eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, onAfter);
@@ -107,7 +171,7 @@ export async function withSimulationPreset(presetName, togglePresetName, fn) {
     const pm = getOpenAiPresetManager();
     const prevPresetName = pm ? pm.getSelectedPresetName() : '';
     const prevToggleSnap = captureToggleSnapshot();
-    const needPresetSwitch = !!presetName && pm && presetName !== prevPresetName;
+    const needPresetSwitch = !!presetName && pm && !isSamePresetName(presetName, prevPresetName);
     let presetSwitched = false;
     try {
         if (needPresetSwitch) {

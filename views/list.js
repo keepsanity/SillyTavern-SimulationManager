@@ -19,6 +19,7 @@ import {
     isCustomPresetTogglesEnabled,
     getTogglePresetNames,
     getCurrentActiveTogglePresetName,
+    isSamePresetName,
 } from '../preset.js';
 import { S } from '../state.js';
 import {
@@ -132,7 +133,7 @@ export function renderCreateView() {
     const presetNames = getAvailablePresetNames();
     let presetOptions = '';
     for (const name of presetNames) {
-        const sel = name === currentPresetName ? ' selected' : '';
+        const sel = isSamePresetName(name, currentPresetName) ? ' selected' : '';
         presetOptions += `<option value="${escapeHtml(name)}"${sel}>${escapeHtml(name)}</option>`;
     }
 

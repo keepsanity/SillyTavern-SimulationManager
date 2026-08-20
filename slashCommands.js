@@ -23,7 +23,7 @@ import {
 } from './constants.js';
 import { normalizePromptText } from './utils.js';
 import { ensureSettings, getDefaultInjectPosition } from './config.js';
-import { getAvailablePresetNames } from './preset.js';
+import { getAvailablePresetNames, resolvePresetName } from './preset.js';
 import { S } from './state.js';
 import { sendSimulation } from './generation.js';
 import { openPopupToSim } from './popup.js';
@@ -86,11 +86,9 @@ function findSavedPrompt(name) {
  * @returns {boolean|null}
  */
 function isKnownPreset(name) {
-    const q = String(name).trim().toLowerCase();
-    if (!q) return false;
-    const names = getAvailablePresetNames();
-    if (!names.length) return null;
-    return names.some(n => String(n).toLowerCase() === q);
+    if (!String(name).trim()) return false;
+    if (!getAvailablePresetNames().length) return null;
+    return resolvePresetName(name) !== null;
 }
 
 async function simCallback(args, unnamed) {
