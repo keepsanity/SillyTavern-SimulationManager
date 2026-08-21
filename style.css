@@ -1669,3 +1669,63 @@
         flex: 1 1 0;
     }
 }
+
+/* ---- 로어북 엔트리 팝업 ---- */
+/* 기본 sim-dialog-box 는 좁고 가운데 정렬이라 폼에는 안 맞는다. 폼용 변형. */
+.sim-dialog-box-form {
+    max-width: 460px;
+    width: calc(100vw - 32px);
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    text-align: left;
+    padding: 24px 20px 18px;
+}
+
+.sim-dialog-box-form .sim-dialog-title {
+    text-align: center;
+    margin-bottom: 14px;
+}
+
+.sim-dialog-box-form .sim-dialog-buttons {
+    margin-top: 16px;
+}
+
+.sim-lore-status {
+    font-size: 12px;
+    color: var(--SmartThemeQuoteColor, #7c83ff);
+    margin-bottom: 12px;
+    text-align: center;
+}
+
+.sim-lore-status:empty {
+    display: none;
+}
+
+.sim-lore-warn {
+    font-size: 11px;
+    line-height: 1.5;
+    color: #e0a800;
+    background: rgba(224, 168, 0, 0.1);
+    border-radius: 10px;
+    padding: 8px 10px;
+    margin-top: 8px;
+}
+
+.sim-lore-hint {
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--SmartThemeBodyColor, #999);
+    opacity: 0.75;
+}
+
+.sim-lore-hint:empty {
+    display: none;
+}
+
+.sim-lore-textarea {
+    width: 100%;
+    min-height: 160px;
+    resize: vertical;
+    font-size: 13px;
+    line-height: 1.5;
+}

@@ -105,6 +105,37 @@ export function buildSettingsHTML() {
 
                     <hr class="sim-settings-hr" />
 
+                    <h4 class="sim-settings-title">로어북 엔트리 생성</h4>
+                    <div class="sim-settings-hint">
+                        시뮬 상세 화면의 [로어북] 버튼으로 만들 엔트리의 기본값입니다.
+                        만들 때마다 팝업에서 바꿀 수 있습니다.
+                    </div>
+                    <div class="sim-settings-block">
+                        <label class="sim-settings-label">기본 활성화 방식</label>
+                        <select id="sim-lore-default-activation" class="text_pole"></select>
+                    </div>
+                    <div class="sim-settings-block">
+                        <label class="sim-settings-label">기본 위치</label>
+                        <select id="sim-lore-default-position" class="text_pole"></select>
+                    </div>
+                    <div class="sim-settings-block" id="sim-lore-default-depth-block">
+                        <label class="sim-settings-label">기본 깊이</label>
+                        <input type="number" id="sim-lore-default-depth" class="text_pole" min="0" max="999" />
+                    </div>
+                    <div class="sim-settings-block">
+                        <label class="sim-settings-label">요약 프롬프트 (선택)</label>
+                        <textarea id="sim-lore-prompt" class="text_pole sim-settings-textarea" placeholder="비워두면 기본 프롬프트 사용"></textarea>
+                    </div>
+                    <button class="sim-btn sim-settings-wide-btn" id="sim-lore-prompt-default-btn">
+                        <i class="fa-solid fa-rotate-left"></i> 기본 프롬프트 불러오기
+                    </button>
+                    <div class="sim-settings-hint">
+                        시뮬 응답이 들어갈 자리는 <code>{{response}}</code> 입니다.
+                        빠뜨리면 프롬프트 끝에 자동으로 붙습니다.
+                    </div>
+
+                    <hr class="sim-settings-hr" />
+
                     <button class="sim-btn sim-btn-primary sim-settings-wide-btn" id="sim-open-prompt-manager-btn">
                         <i class="fa-solid fa-bookmark"></i> 저장된 프롬프트 관리
                     </button>

@@ -60,3 +60,70 @@ export const SIM_OOC_KEY = 'sim_manager_ooc';
 
 // 채팅 메시지 → 시뮬 저장 버튼 클래스
 export const SIM_SAVE_BTN_CLASS = 'sim-save-to-mgr';
+
+// ============================================
+// 로어북 엔트리 생성
+// ============================================
+export const LIVING_LOREBOOK_EXT = 'SillyTavern-LivingLorebook';
+
+// 활성화 방식. ST 는 이걸 constant/vectorized 불린 두 개의 조합으로 관리한다.
+// (world-info.js 의 handleEntryStateSelectorHelper 참고)
+export const LORE_ACTIVATION = {
+    NORMAL: 'normal',           // 🟢 키워드 조건 만족 시
+    CONSTANT: 'constant',       // 🔵 상시
+    VECTORIZED: 'vectorized',   // 🔗 벡터화
+};
+export const LORE_ACTIVATION_LABELS = {
+    [LORE_ACTIVATION.NORMAL]: '🟢 조건 만족시 (키워드)',
+    [LORE_ACTIVATION.CONSTANT]: '🔵 상시',
+    [LORE_ACTIVATION.VECTORIZED]: '🔗 벡터화',
+};
+
+// 값은 코어 world_info_position 과 반드시 같아야 한다 (world-info.js).
+// import 하지 않고 복제하는 이유: 이 파일을 부수효과 없는 순수 상수로 유지하기 위함.
+export const LORE_POSITIONS = {
+    BEFORE_CHAR: 0,
+    AFTER_CHAR: 1,
+    AN_TOP: 2,
+    AN_BOTTOM: 3,
+    AT_DEPTH: 4,
+    EM_TOP: 5,
+    EM_BOTTOM: 6,
+};
+export const LORE_POSITION_LABELS = {
+    [LORE_POSITIONS.BEFORE_CHAR]: '캐릭터 정의 전',
+    [LORE_POSITIONS.AFTER_CHAR]: '캐릭터 정의 후',
+    [LORE_POSITIONS.AN_TOP]: '작가 노트 상단',
+    [LORE_POSITIONS.AN_BOTTOM]: '작가 노트 하단',
+    [LORE_POSITIONS.AT_DEPTH]: '채팅 내 @ 깊이',
+    [LORE_POSITIONS.EM_TOP]: '예제 메시지 상단',
+    [LORE_POSITIONS.EM_BOTTOM]: '예제 메시지 하단',
+};
+
+// 코어 DEFAULT_DEPTH 와 동일
+export const LORE_DEFAULT_DEPTH = 4;
+
+// 요약 프롬프트에서 시뮬 응답이 들어갈 자리. 커스텀 프롬프트에 없으면 끝에 붙인다.
+export const LORE_RESPONSE_PLACEHOLDER = '{{response}}';
+
+// 로어 엔트리 추출 프롬프트. LLM 에 나가는 지시문이라 영어로 쓴다.
+export const LORE_SUMMARY_PROMPT = `<lorebook_extraction_task priority="critical">
+<rule>You are extracting a lorebook entry from a simulation text. This is a DATA EXTRACTION task, NOT roleplay.</rule>
+<rule>Distill the durable, reusable facts: characters, places, objects, events, relationships, and rules of the world.</rule>
+<rule>Omit moment-to-moment action, dialogue beats, and prose flourishes. Keep only what would still matter many scenes later.</rule>
+<rule>Write the entry in the SAME LANGUAGE as the simulation text.</rule>
+<rule>Output EXACTLY the three labeled fields shown below and nothing else. No preamble, no code fences, no commentary.</rule>
+</lorebook_extraction_task>
+
+<output_format>
+TITLE: a short noun phrase naming this entry
+KEYWORDS: 3-6 comma-separated terms that should trigger this entry
+CONTENT:
+the entry body, written as compact declarative statements
+</output_format>
+
+<simulation_text>
+${LORE_RESPONSE_PLACEHOLDER}
+</simulation_text>
+
+Begin your output with "TITLE:" now:`;

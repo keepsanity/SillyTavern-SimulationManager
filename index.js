@@ -24,6 +24,10 @@ import {
     DEBUG_PREFIX,
     SIM_ICON_PRESETS,
     SIM_POSITION_LABELS,
+    LORE_ACTIVATION_LABELS,
+    LORE_POSITION_LABELS,
+    LORE_POSITIONS,
+    LORE_SUMMARY_PROMPT,
 } from './constants.js';
 import {
     normalizeSimPosition,
@@ -34,6 +38,7 @@ import {
     getDisplayName,
     getDisplayIcon,
     getDefaultInjectPosition,
+    normalizeLoreDepth,
 } from './config.js';
 import { S } from './state.js';
 import {
@@ -147,6 +152,70 @@ import {
                 saveSettingsDebounced();
             });
         }
+
+        // 로어북 엔트리 기본값
+        const loreActSelect = document.getElementById('sim-lore-default-activation');
+        const lorePosSelect = document.getElementById('sim-lore-default-position');
+        const loreDepthBlock = document.getElementById('sim-lore-default-depth-block');
+        const loreDepthInput = document.getElementById('sim-lore-default-depth');
+        const lorePromptArea = document.getElementById('sim-lore-prompt');
+
+        // 깊이는 '@ 깊이' 위치일 때만 의미가 있다.
+        const refreshLoreDepthBlock = () => {
+            if (!loreDepthBlock || !lorePosSelect) return;
+            loreDepthBlock.style.display =
+                Number(lorePosSelect.value) === LORE_POSITIONS.AT_DEPTH ? '' : 'none';
+        };
+
+        if (loreActSelect) {
+            loreActSelect.innerHTML = Object.entries(LORE_ACTIVATION_LABELS).map(([v, l]) =>
+                `<option value="${v}">${escapeHtml(l)}</option>`
+            ).join('');
+            loreActSelect.value = extension_settings[EXTENSION_NAME].loreDefaultActivation;
+            loreActSelect.addEventListener('change', () => {
+                extension_settings[EXTENSION_NAME].loreDefaultActivation = loreActSelect.value;
+                saveSettingsDebounced();
+            });
+        }
+
+        if (lorePosSelect) {
+            lorePosSelect.innerHTML = Object.entries(LORE_POSITION_LABELS).map(([v, l]) =>
+                `<option value="${v}">${escapeHtml(l)}</option>`
+            ).join('');
+            lorePosSelect.value = String(extension_settings[EXTENSION_NAME].loreDefaultPosition);
+            lorePosSelect.addEventListener('change', () => {
+                extension_settings[EXTENSION_NAME].loreDefaultPosition = Number(lorePosSelect.value);
+                saveSettingsDebounced();
+                refreshLoreDepthBlock();
+            });
+        }
+        refreshLoreDepthBlock();
+
+        if (loreDepthInput) {
+            loreDepthInput.value = extension_settings[EXTENSION_NAME].loreDefaultDepth;
+            loreDepthInput.addEventListener('change', () => {
+                const v = normalizeLoreDepth(loreDepthInput.value);
+                extension_settings[EXTENSION_NAME].loreDefaultDepth = v;
+                loreDepthInput.value = v;   // 이상한 값을 넣었으면 정규화된 값으로 되돌려 보여준다
+                saveSettingsDebounced();
+            });
+        }
+
+        if (lorePromptArea) {
+            lorePromptArea.value = extension_settings[EXTENSION_NAME].loreSummaryPrompt;
+            lorePromptArea.addEventListener('input', () => {
+                extension_settings[EXTENSION_NAME].loreSummaryPrompt = lorePromptArea.value;
+                saveSettingsDebounced();
+            });
+        }
+
+        document.getElementById('sim-lore-prompt-default-btn')?.addEventListener('click', () => {
+            if (!lorePromptArea) return;
+            lorePromptArea.value = LORE_SUMMARY_PROMPT;
+            extension_settings[EXTENSION_NAME].loreSummaryPrompt = LORE_SUMMARY_PROMPT;
+            saveSettingsDebounced();
+            if (typeof toastr !== 'undefined') toastr.info('기본 프롬프트를 불러왔습니다.', '시뮬 매니저');
+        });
 
         // 번역 설정 초기화
         const transToggle = document.getElementById('sim-translation-toggle');
