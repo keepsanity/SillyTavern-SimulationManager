@@ -229,6 +229,7 @@ export function showLoreEntryDialog(responseText) {
                 <i class="fa-solid fa-spinner fa-spin"></i> 요약하는 중...
             </div>
 
+            <div class="sim-lore-form">
             <div class="sim-field">
                 <label>대상 로어북</label>
                 <select class="sim-saved-prompts-select" id="sim-lore-book">
@@ -270,6 +271,7 @@ export function showLoreEntryDialog(responseText) {
             <div class="sim-field">
                 <label>본문</label>
                 <textarea class="text_pole sim-lore-textarea" id="sim-lore-content" placeholder="엔트리 내용"></textarea>
+            </div>
             </div>
 
             <div class="sim-dialog-buttons">

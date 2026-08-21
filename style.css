@@ -1729,3 +1729,50 @@
     font-size: 13px;
     line-height: 1.5;
 }
+
+/* 필드 간격은 flex gap 으로 준다.
+   .sim-field + .sim-field 인접 선택자는 사이에 경고 배너가 끼는 순간 끊겨서
+   대상 로어북 셀렉트 밑에 제목이 딱 붙어버린다. gap 은 display:none 을 건너뛴다. */
+.sim-lore-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.sim-lore-form .sim-field + .sim-field {
+    margin-top: 0;
+}
+
+/* 폼 컨트롤 높이 통일.
+   확장의 .sim-saved-prompts-select 는 padding 9px/radius 8px 인데
+   ST 의 .text_pole 은 padding 3px/radius 5px + margin 5px 0 이라
+   그냥 두면 셀렉트만 크고 인풋만 납작해진다. */
+.sim-dialog-box-form .sim-saved-prompts-select,
+.sim-dialog-box-form input.text_pole,
+.sim-dialog-box-form textarea.text_pole {
+    width: 100%;
+    box-sizing: border-box;
+    height: auto;
+    margin: 0;
+    padding: 9px 12px;
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor, #ddd);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    transition: border-color 0.15s ease;
+}
+
+.sim-dialog-box-form .sim-saved-prompts-select:focus,
+.sim-dialog-box-form input.text_pole:focus,
+.sim-dialog-box-form textarea.text_pole:focus {
+    outline: none;
+    border-color: var(--SmartThemeQuoteColor, #7c83ff);
+}
+
+/* 숫자 입력은 다른 칸만큼 넓을 이유가 없다 */
+.sim-dialog-box-form input[type="number"].text_pole {
+    max-width: 120px;
+}
