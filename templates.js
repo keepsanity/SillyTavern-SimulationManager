@@ -123,6 +123,15 @@ export function buildSettingsHTML() {
                         <input type="number" id="sim-lore-default-depth" class="text_pole" min="0" max="999" />
                     </div>
                     <div class="sim-settings-block">
+                        <label class="sim-settings-label">요약용 Connection Profile (선택)</label>
+                        <select id="sim-lore-profile" class="text_pole connection_profile"></select>
+                    </div>
+                    <div class="sim-settings-hint">
+                        비워두면 현재 API·프리셋으로 요약합니다. 프로필을 고르면 캐릭터 카드와 채팅 기록 없이
+                        요약 지시문과 시뮬 응답만 보내므로 훨씬 싸고, 모델이 롤플레이로 새지 않습니다.
+                        어느 쪽이든 <code>{{char}}</code> 같은 매크로는 그대로 쓸 수 있습니다.
+                    </div>
+                    <div class="sim-settings-block">
                         <label class="sim-settings-label">요약 프롬프트 (선택)</label>
                         <textarea id="sim-lore-prompt" class="text_pole sim-settings-textarea" placeholder="비워두면 기본 프롬프트 사용"></textarea>
                     </div>

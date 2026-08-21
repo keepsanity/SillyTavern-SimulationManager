@@ -209,6 +209,24 @@ import {
             });
         }
 
+        // 요약용 Connection Profile 드롭다운 (없으면 조용히 넘어간다 — 현재 API 로 폴백되므로)
+        try {
+            const ctx = getContext();
+            if (ctx.ConnectionManagerRequestService && document.getElementById('sim-lore-profile')) {
+                ctx.ConnectionManagerRequestService.handleDropdown(
+                    '#sim-lore-profile',
+                    extension_settings[EXTENSION_NAME].loreProfileId || '',
+                    (profile) => {
+                        extension_settings[EXTENSION_NAME].loreProfileId = profile?.id ?? '';
+                        saveSettingsDebounced();
+                        console.log(DEBUG_PREFIX, '로어 요약 프로필 변경:', profile?.name || '없음 (현재 API 사용)');
+                    },
+                );
+            }
+        } catch (e) {
+            console.warn(DEBUG_PREFIX, 'Lore profile dropdown unavailable:', e);
+        }
+
         document.getElementById('sim-lore-prompt-default-btn')?.addEventListener('click', () => {
             if (!lorePromptArea) return;
             lorePromptArea.value = LORE_SUMMARY_PROMPT;

@@ -4,9 +4,9 @@
  * 요약(LLM 호출) · 파싱 · 엔트리 저장 · 미리보기 팝업까지 로어북 관련은 전부 여기에 둔다.
  * LivingLorebook 은 import 하지 않는다. managed 로어북 경고를 위해 설정값만 훔쳐본다.
  */
-import { generateQuietPrompt } from '../../../../script.js';
-import { saveSettingsDebounced } from '../../../../script.js';
-import { extension_settings } from '../../../extensions.js';
+import { generateQuietPrompt, saveSettingsDebounced, substituteParams } from '../../../../script.js';
+import { extension_settings, getContext } from '../../../extensions.js';
+import { oai_settings } from '../../../openai.js';
 import {
     world_names,
     loadWorldInfo,
@@ -24,6 +24,7 @@ import {
     LORE_POSITION_LABELS,
     LORE_RESPONSE_PLACEHOLDER,
     LORE_SUMMARY_PROMPT,
+    LORE_SUMMARY_MAX_TOKENS,
 } from './constants.js';
 import { escapeHtml, getFullResponseText } from './utils.js';
 import { ensureSettings, getLoreDefaults, normalizeLoreDepth } from './config.js';
@@ -95,11 +96,57 @@ export function parseLoreSummary(raw) {
     return { title, keywords, content, parsed: !!(title || keywords.length) };
 }
 
+/** 커넥션 프로필 응답에서 본문 텍스트 뽑기. 소스마다 모양이 달라 방어적으로 훑는다. */
+function extractProfileText(response) {
+    if (typeof response === 'string') return response;
+    return response?.choices?.[0]?.message?.content
+        ?? response?.content
+        ?? response?.message
+        ?? '';
+}
+
+/**
+ * 요약 한 번. 프로필이 지정돼 있으면 그쪽으로, 아니면 현재 API/프리셋으로.
+ *
+ * 프로필 경로는 캐릭터 카드도 채팅 기록도 안 실린다 (요약할 텍스트는 프롬프트 안에 이미 있다).
+ * 대신 ST 의 프롬프트 조립을 건너뛰므로 매크로를 여기서 직접 풀어줘야 한다.
+ * 기본 경로는 Generate() 안에서 substituteParams 가 도니까 손대지 않는다.
+ */
+async function runSummaryRequest(prompt) {
+    ensureSettings();
+    const profileId = extension_settings[EXTENSION_NAME].loreProfileId;
+
+    if (!profileId) {
+        return await generateQuietPrompt({ quietPrompt: prompt, quietToLoud: true });
+    }
+
+    const context = getContext();
+    if (!context.ConnectionManagerRequestService) {
+        throw new Error('Connection Manager 확장이 필요합니다. (설정에서 요약 프로필을 비우면 현재 API로 돌아갑니다)');
+    }
+
+    const response = await context.ConnectionManagerRequestService.sendRequest(
+        profileId,
+        [
+            { role: 'system', content: 'You extract structured lorebook entries from text. Output only the requested fields.' },
+            { role: 'user', content: substituteParams(prompt) },
+        ],
+        LORE_SUMMARY_MAX_TOKENS,
+        { stream: false, extractData: true, includePreset: false, includeInstruct: false },
+        // Vertex 인증 모드는 프로필에 안 담기고 전역 설정에 있다. 있을 때만 실어 보낸다.
+        oai_settings?.vertexai_auth_mode ? { vertexai_auth_mode: oai_settings.vertexai_auth_mode } : {},
+    );
+
+    const text = extractProfileText(response);
+    if (!text) throw new Error('요약 결과가 비어있습니다.');
+    return text;
+}
+
 /** 시뮬 응답 하나를 요약해 엔트리 초안을 만든다. */
 export async function summarizeToLoreEntry(responseText) {
     const prompt = buildLoreSummaryPrompt(responseText);
     console.log(DEBUG_PREFIX, '로어 요약 요청, 길이:', prompt.length);
-    const raw = await generateQuietPrompt({ quietPrompt: prompt, quietToLoud: true });
+    const raw = await runSummaryRequest(prompt);
     console.log(DEBUG_PREFIX, '로어 요약 응답 길이:', String(raw ?? '').length);
     return parseLoreSummary(raw);
 }
@@ -301,7 +348,7 @@ export function showLoreEntryDialog(responseText) {
             setBusy(false, draft.parsed ? '' : '형식을 알아보지 못해 전체를 본문에 넣었습니다. 확인해주세요.');
         } catch (err) {
             console.error(DEBUG_PREFIX, '로어 요약 실패:', err);
-            setBusy(false, '요약에 실패했습니다. 다시 시도해주세요.');
+            setBusy(false, `요약 실패: ${err?.message || '알 수 없는 오류'}`);
         }
     }
 

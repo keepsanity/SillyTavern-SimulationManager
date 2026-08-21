@@ -35,6 +35,7 @@ const defaultSettings = {
     promptIntercept: false,
     // 로어북 엔트리 생성 — 팝업이 미리 채워질 기본값들
     loreSummaryPrompt: '',              // 비우면 LORE_SUMMARY_PROMPT 사용
+    loreProfileId: '',                  // 비우면 현재 API/프리셋으로 요약
     loreDefaultActivation: LORE_ACTIVATION.NORMAL,
     loreDefaultPosition: 0,             // LORE_POSITIONS.BEFORE_CHAR
     loreDefaultDepth: LORE_DEFAULT_DEPTH,
@@ -62,6 +63,7 @@ export function ensureSettings() {
     if (!PROMPT_SORT_ORDERS.includes(s.promptSortOrder)) s.promptSortOrder = 'newest';
     if (typeof s.promptIntercept !== 'boolean') s.promptIntercept = false;
     if (typeof s.loreSummaryPrompt !== 'string') s.loreSummaryPrompt = '';
+    if (typeof s.loreProfileId !== 'string') s.loreProfileId = '';
     if (!Object.hasOwn(LORE_ACTIVATION_LABELS, s.loreDefaultActivation)) s.loreDefaultActivation = LORE_ACTIVATION.NORMAL;
     if (!Object.hasOwn(LORE_POSITION_LABELS, s.loreDefaultPosition)) s.loreDefaultPosition = 0;
     s.loreDefaultDepth = normalizeLoreDepth(s.loreDefaultDepth);

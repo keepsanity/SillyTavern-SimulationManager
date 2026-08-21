@@ -103,6 +103,9 @@ export const LORE_POSITION_LABELS = {
 // 코어 DEFAULT_DEPTH 와 동일
 export const LORE_DEFAULT_DEPTH = 4;
 
+// 커넥션 프로필로 요약할 때의 응답 상한. 로어 엔트리 한 건이라 넉넉하면 충분하다.
+export const LORE_SUMMARY_MAX_TOKENS = 8192;
+
 // 요약 프롬프트에서 시뮬 응답이 들어갈 자리. 커스텀 프롬프트에 없으면 끝에 붙인다.
 export const LORE_RESPONSE_PLACEHOLDER = '{{response}}';
 
