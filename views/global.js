@@ -61,6 +61,24 @@ function withBusyButton(id, label, fn) {
     return fn();
 }
 
+/**
+ * 스캔 한 번 돌리고 결과를 알린다. 모아보기의 새로고침 버튼과 설정 패널의 첫 진입이
+ * 같은 문구를 써야 해서 여기 모아 둔다.
+ * 일부 채팅을 못 읽었으면 그 사실을 알린다 — 조용히 넘기면 방이 비어 보이는 이유를 알 수 없다.
+ */
+export async function rescanWithFeedback() {
+    const { total, complete } = await scanAllChatsForSimulations();
+    if (typeof toastr === 'undefined') return;
+
+    if (total < 0) {
+        toastr.error('스캔에 실패했습니다.', '시뮬 매니저');
+    } else if (complete) {
+        toastr.info(`${total}개의 시뮬레이션을 찾았습니다.`, '시뮬 매니저');
+    } else {
+        toastr.warning(`${total}개를 찾았지만 일부 채팅을 읽지 못했습니다. 비어 보이는 방은 새로고침으로 다시 시도해 주세요.`, '시뮬 매니저');
+    }
+}
+
 // ============================================
 // 1단계: 채팅방 목록
 // ============================================
@@ -112,10 +130,7 @@ export function renderGlobalListView() {
     // 새로고침 버튼
     document.getElementById('sim-global-rescan')?.addEventListener('click', () =>
         withBusyButton('sim-global-rescan', '스캔 중...', async () => {
-            const result = await scanAllChatsForSimulations();
-            if (result >= 0 && typeof toastr !== 'undefined') {
-                toastr.info(`${result}개의 시뮬레이션을 찾았습니다.`, '시뮬 매니저');
-            }
+            await rescanWithFeedback();
             renderGlobalListView();
         }));
 

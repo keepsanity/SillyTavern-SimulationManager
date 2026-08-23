@@ -279,7 +279,9 @@ async function fetchSimsFromChatFile(entry) {
 /**
  * 전체 채팅방 스캔 → 인덱스 재구축.
  * 채팅당 파일 전체를 받던 걸 캐릭터당 1회 요청(metadata:true, 서버가 첫 줄만 읽음)으로 바꿨다.
- * @returns {Promise<number>} 찾은 시뮬 개수 (실패 시 -1)
+ * @returns {Promise<{total: number, complete: boolean}>}
+ *   total = 찾은 시뮬 개수 (스캔 자체가 실패하면 -1),
+ *   complete = 채팅 목록·파일을 하나도 빠짐없이 읽었는지. false 면 유령 항목 정리를 건너뛴다.
  */
 export async function scanAllChatsForSimulations() {
     const index = getGlobalIndex();
@@ -375,14 +377,17 @@ export async function scanAllChatsForSimulations() {
             }
         }
 
-        // 목록을 다 못 읽었으면 인덱스를 믿을 수 없다. stale 을 유지해 다음에 다시 스캔시킨다.
+        // 스캔이 끝까지 돌았으면 인덱스는 현재 형식으로 다시 세워진 것이다.
+        // 일부 출처를 못 읽었어도 여기서 끈다 — stale 을 붙들고 있으면 깨진 채팅 폴더 하나
+        // 때문에 모아보기를 열 때마다 전체 스캔이 반복된다. 못 읽은 방은 펼칠 때 비어
+        // 보이고, 그 화면의 새로고침으로 다시 시도할 수 있다.
         ensureSettings();
-        if (complete) extension_settings[EXTENSION_NAME].globalIndexStale = false;
+        extension_settings[EXTENSION_NAME].globalIndexStale = false;
         saveSettingsDebounced();
-        return totalFound;
+        return { total: totalFound, complete };
     } catch (e) {
         console.error(DEBUG_PREFIX, 'Scan failed:', e);
-        return -1;
+        return { total: -1, complete: false };
     }
 }
 
@@ -397,7 +402,7 @@ export async function scanAllChatsForSimulations() {
  */
 export async function exportSimBackup() {
     try {
-        await scanAllChatsForSimulations(); // 최신 데이터 보장
+        await scanAllChatsForSimulations(); // 최신 데이터 보장 (결과 형태는 여기선 안 쓴다)
         const payload = await buildBackupPayload();
         clearSimCache();                    // 전 채팅 본문을 들고 있을 이유가 없다
 

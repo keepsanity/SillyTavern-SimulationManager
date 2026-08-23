@@ -8,9 +8,8 @@ import { EXTENSION_NAME } from './constants.js';
 import { escapeHtml } from './utils.js';
 import { ensureSettings } from './config.js';
 import { S } from './state.js';
-import { scanAllChatsForSimulations } from './store.js';
 import { openPopup } from './popup.js';
-import { renderGlobalListView } from './views/global.js';
+import { renderGlobalListView, rescanWithFeedback } from './views/global.js';
 import { renderPromptManagerView } from './views/prompts.js';
 
 export function renderSettingsSavedPrompts() {
@@ -149,10 +148,7 @@ export function bindSettingsEvents() {
             const footer = document.getElementById('sim-footer');
             if (footer) { footer.innerHTML = ''; footer.classList.add('hidden'); }
 
-            const result = await scanAllChatsForSimulations();
-            if (result >= 0 && typeof toastr !== 'undefined') {
-                toastr.info(`${result}개의 시뮬레이션을 찾았습니다.`, '시뮬 매니저');
-            }
+            await rescanWithFeedback();
             renderGlobalListView();
         }
     });
