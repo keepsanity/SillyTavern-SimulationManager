@@ -17,7 +17,8 @@ import { normalizeSimPosition } from './utils.js';
 const defaultSettings = {
     savedPrompts: [],
     notificationsEnabled: true,
-    // 모아보기 인덱스: { chatKey: { chatName, count, lastAt, avatar?, chName?, fileName?, groupId? } }
+    // 모아보기 인덱스: { chatKey: { chatName, count, lastAt, avatar?, chName?, fileName?, groupId?, groupChatId? } }
+    // 다시 읽어올 때 쓰는 건 캐릭터 채팅이면 avatar+chName+fileName, 그룹이면 groupChatId.
     // 시뮬 본문은 여기 안 들어간다 — 원본은 채팅 파일, 본문 캐시는 store.js 메모리.
     globalIndex: {},
     // 인덱스를 다시 만들어야 하는 상태면 true (다음 모아보기에서 스캔)

@@ -242,13 +242,16 @@ async function fetchSimsFromChatFile(entry) {
     const headers = getRequestHeaders();
     try {
         let res;
-        if (entry.groupChatId || entry.groupId) {
-            // 그룹은 채팅 id 로 조회한다 (그룹 id 로 넣으면 다른 파일을 읽는다).
+        if (entry.groupChatId) {
+            // 그룹은 반드시 채팅 id 로 조회한다. 그룹 id 를 넣으면 <그룹id>.jsonl 을 읽는데,
+            // 그건 그 그룹의 첫 채팅이거나 아예 없는 파일이다 (요즘 그룹은 채팅 파일명이
+            // humanizedDateTime). 그래서 groupId 밖에 없는 구버전 항목은 폴백하지 않고
+            // 아래 '출처 없음' 으로 떨군다 — 엉뚱한 방을 보여주느니 스캔을 기다리는 게 낫다.
             res = await fetch('/api/chats/group/get', {
                 method: 'POST',
                 headers,
                 cache: 'no-cache',
-                body: JSON.stringify({ id: entry.groupChatId || entry.groupId }),
+                body: JSON.stringify({ id: entry.groupChatId }),
             });
         } else if (entry.avatar && entry.fileName) {
             res = await fetch('/api/chats/get', {
@@ -262,7 +265,7 @@ async function fetchSimsFromChatFile(entry) {
                 }),
             });
         } else {
-            // 출처 정보가 없는 인덱스 항목 (구버전 마이그레이션 직후) — 스캔이 필요하다.
+            // 출처 정보가 없거나 구버전 형식인 항목 — 스캔이 다시 채워야 한다.
             return [];
         }
         if (!res.ok) return [];
