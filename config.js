@@ -17,7 +17,11 @@ import { normalizeSimPosition } from './utils.js';
 const defaultSettings = {
     savedPrompts: [],
     notificationsEnabled: true,
-    globalSimulations: {}, // { chatKey: { chatName, simulations: [...] } }
+    // 모아보기 인덱스: { chatKey: { chatName, count, lastAt, avatar?, chName?, fileName?, groupId? } }
+    // 시뮬 본문은 여기 안 들어간다 — 원본은 채팅 파일, 본문 캐시는 store.js 메모리.
+    globalIndex: {},
+    // 인덱스가 구버전에서 넘어와 출처 정보가 없는 상태면 true (다음 모아보기에서 스캔)
+    globalIndexStale: false,
     // 번역 설정
     translationEnabled: false,
     translationTargetLang: '한국어',
@@ -51,7 +55,10 @@ export function ensureSettings() {
     const s = extension_settings[EXTENSION_NAME];
     if (!Array.isArray(s.savedPrompts)) s.savedPrompts = [];
     if (typeof s.notificationsEnabled !== 'boolean') s.notificationsEnabled = true;
-    if (!s.globalSimulations || typeof s.globalSimulations !== 'object') s.globalSimulations = {};
+    if (!s.globalIndex || typeof s.globalIndex !== 'object') s.globalIndex = {};
+    if (typeof s.globalIndexStale !== 'boolean') s.globalIndexStale = false;
+    // s.globalSimulations(구버전 본문 사본)는 여기서 건드리지 않는다.
+    // store.js 의 migrateLegacyGlobalStore() 가 백업한 뒤 지운다.
     if (typeof s.translationEnabled !== 'boolean') s.translationEnabled = false;
     if (!s.translationTargetLang) s.translationTargetLang = '한국어';
     if (typeof s.translationCustomPrompt !== 'string') s.translationCustomPrompt = '';

@@ -130,14 +130,14 @@ export function bindSettingsEvents() {
         openPopup();
 
         ensureSettings();
-        const global = extension_settings[EXTENSION_NAME].globalSimulations;
-        const hasData = Object.keys(global).length > 0;
+        const s = extension_settings[EXTENSION_NAME];
+        const hasIndex = Object.keys(s.globalIndex).length > 0;
 
-        if (hasData) {
-            // 이미 스캔된 데이터가 있으면 바로 표시
+        if (hasIndex && !s.globalIndexStale) {
+            // 인덱스가 있으면 바로 표시 (본문은 방을 펼칠 때 읽는다)
             renderGlobalListView();
         } else {
-            // 첫 스캔만 자동 실행
+            // 첫 실행이거나, 구버전에서 넘어와 인덱스에 출처 정보가 없을 때만 스캔
             const container = document.getElementById('sim-content');
             if (container) {
                 container.innerHTML = `

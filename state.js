@@ -24,11 +24,10 @@ export const S = {
     editingPartIdx: null,
 
     // ── 모아보기(Global) 뷰 상태 ──────────────
+    // 모아보기는 읽기 전용이라 편집 상태가 없다.
     globalViewChatKey: null,
     globalViewSimId: null,
     globalViewSimIndex: 0,
-    isEditingGlobalPrompt: false,
-    editingGlobalPartIdx: null,
 
     // ── 번역 상태 ────────────────────────────
     /** true면 번역 보기, false면 원문 보기 */

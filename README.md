@@ -14,7 +14,7 @@ conversation.
 - `/sim` slash command with `name` / `preset` / `position` / `quiet` / `open` / `return` arguments
 - **Saved prompts** — store prompt templates and reuse them, with sort by newest/oldest/name
 - **Multiple send** — run the same simulation across several chats in one pass
-- **Global viewer** — browse every chat's simulations app-wide, export a backup, clean up stale entries
+- **Global viewer** — browse every chat's simulations app-wide (read-only), export a backup, clean up stale entries
 - **Translation** — translate a response with its own connection profile, target language, and
   custom prompt (independent of the main API/preset)
 - **Lorebook entry generation** — summarize a simulation response into a lorebook entry: pick the
@@ -46,7 +46,7 @@ defaults (activation/position/depth, profile, summary prompt), and saved-prompt 
 - `name` / `preset` / `position` / `quiet` / `open` / `return` 인자를 받는 `/sim` 슬래시 커맨드
 - **저장된 프롬프트** — 자주 쓰는 프롬프트를 저장해두고 재사용, 최신순/오래된순/이름순 정렬
 - **다중 전송** — 같은 시뮬을 여러 채팅방에 한 번에 실행
-- **모아보기** — 전체 채팅방의 시뮬을 한 곳에서 훑어보고, 백업 내보내기, 오래된 항목 정리
+- **모아보기** — 전체 채팅방의 시뮬을 한 곳에서 훑어보기(읽기 전용), 백업 내보내기, 오래된 항목 정리
 - **번역** — 메인 API/프리셋과 별개로 자체 커넥션 프로필·대상 언어·커스텀 프롬프트로 응답 번역
 - **로어북 엔트리 생성** — 시뮬 응답을 요약해 로어북 엔트리로: 대상 로어북, 활성화 방식(키워드/상시/
   벡터), 위치·깊이 지정, 저장 전 미리보기·수정 가능. 요약용 커넥션 프로필·프롬프트도 메인과 별개로 설정 가능

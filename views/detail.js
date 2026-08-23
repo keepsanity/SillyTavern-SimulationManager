@@ -438,7 +438,7 @@ export function renderDetailView() {
                     break;
                 }
                 case 'part-revision':
-                    showPartRevisionDialog(sim, currentIdx, partIdx, false);
+                    showPartRevisionDialog(sim, currentIdx, partIdx);
                     break;
                 case 'part-copy':
                     copyTextToClipboard(getPartText(sim, currentIdx, partIdx));
@@ -489,7 +489,7 @@ export function renderDetailView() {
 
     document.getElementById('sim-continue')?.addEventListener('click', (e) => {
         if (e.currentTarget.dataset.simStop === '1') { stopSimGeneration(); return; }
-        handleContinueSimulation(sim, sim.currentIndex || 0, false);
+        handleContinueSimulation(sim, sim.currentIndex || 0);
     });
 
     document.getElementById('sim-regenerate')?.addEventListener('click', (e) => {
@@ -546,7 +546,8 @@ export function renderResponseParts(sim, responseIdx, currentEditPart = null, is
         const isCont = partIdx > 0;
         const partKey = `${prefix}-part-${partIdx}`;
 
-        if (currentEditPart === partIdx) {
+        // 모아보기는 읽기 전용이라 수정 모드로 들어오지 않는다.
+        if (!isGlobal && currentEditPart === partIdx) {
             // 수정 모드
             return `<div class="sim-response-part" data-part-idx="${partIdx}">
                 <textarea class="sim-edit-response-textarea" id="${partKey}-edit-input">${escapeHtml(part)}</textarea>
@@ -578,7 +579,14 @@ export function renderResponseParts(sim, responseIdx, currentEditPart = null, is
                 translateBtn = `<button class="sim-btn-icon sim-btn-icon-sm" data-action="part-translate" data-part="${partIdx}" title="번역"><i class="fa-solid fa-language"></i></button>`;
             }
         }
-        const actions = `<div class="sim-part-actions">
+        // 모아보기(isGlobal)는 읽기 전용 — 내용을 바꾸는 버튼은 내보내지 않는다.
+        // 예전엔 isGlobal 이 id 접두사만 바꿔서, 디테일 뷰에 파트 기능을 추가할 때마다
+        // 모아보기에도 그대로 딸려 들어갔다. 거기서 한 수정은 채팅 파일에 안 남는다.
+        const actions = isGlobal
+            ? `<div class="sim-part-actions">
+            <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-copy" data-part="${partIdx}" title="복사"><i class="fa-solid fa-copy"></i></button>
+        </div>`
+            : `<div class="sim-part-actions">
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-edit" data-part="${partIdx}" title="수정"><i class="fa-solid fa-pen"></i></button>
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-revision" data-part="${partIdx}" title="통제광"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-copy" data-part="${partIdx}" title="복사"><i class="fa-solid fa-copy"></i></button>

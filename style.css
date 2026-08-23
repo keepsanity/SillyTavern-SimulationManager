@@ -756,6 +756,26 @@
     font-size: 11px;
 }
 
+/* 모아보기 상세 하단 안내 — 여기서는 수정이 안 된다는 걸 알려준다 */
+.sim-readonly-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--SmartThemeBodyColor, #aaa);
+    opacity: 0.75;
+}
+
+.sim-readonly-note i {
+    font-size: 11px;
+    opacity: 0.8;
+}
+
 /* ---- Mobile ---- */
 @media (max-width: 768px) {
     #sim-manager-popup {

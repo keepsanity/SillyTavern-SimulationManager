@@ -53,7 +53,6 @@ import {
 import { showSimNotification } from './popup.js';
 import { renderSettingsSavedPrompts } from './settingsPanel.js';
 import { renderDetailView } from './views/detail.js';
-import { renderGlobalDetailView } from './views/global.js';
 import { renderCreateView } from './views/list.js';
 
 /**
@@ -394,7 +393,7 @@ export async function handleRegenerateSimulation(sim) {
     }
 }
 
-export async function handleContinueSimulation(sim, responseIdx, isGlobal = false) {
+export async function handleContinueSimulation(sim, responseIdx) {
     if (S.simGenerating) return;
     const currentResponse = sim.responses[responseIdx];
     if (!currentResponse) {
@@ -416,12 +415,9 @@ export async function handleContinueSimulation(sim, responseIdx, isGlobal = fals
                 { kind: '이어쓰기', position: sim.injectPosition },
                 () => runSimGeneration(continueDirective, continueBody, sim.injectPosition))
         );
-        // preset 전환 중 chat_metadata 가 바뀌었을 수 있으므로 live sim 재조회 (비글로벌만)
-        let target = sim;
-        if (!isGlobal) {
-            const liveSims = getSimulations();
-            target = (S.tempSim && S.tempSim.id === sim.id) ? S.tempSim : liveSims.find(s => s.id === sim.id) || sim;
-        }
+        // preset 전환 중 chat_metadata 가 바뀌었을 수 있으므로 live sim 재조회
+        const liveSims = getSimulations();
+        const target = (S.tempSim && S.tempSim.id === sim.id) ? S.tempSim : liveSims.find(s => s.id === sim.id) || sim;
         // continuations 배열에 파트 분리 저장
         if (!target.continuations) target.continuations = {};
         const key = String(responseIdx);
@@ -431,11 +427,7 @@ export async function handleContinueSimulation(sim, responseIdx, isGlobal = fals
         // 번역 캐시 무효화
         if (target.translations) delete target.translations[key];
 
-        if (isGlobal) {
-            saveSettingsDebounced();
-        } else {
-            if (!S.tempSim || S.tempSim.id !== target.id) saveSimulations();
-        }
+        if (!S.tempSim || S.tempSim.id !== target.id) saveSimulations();
 
         toastr.success('응답이 이어쓰기되었습니다.', '시뮬 매니저');
     } catch (err) {
@@ -447,11 +439,7 @@ export async function handleContinueSimulation(sim, responseIdx, isGlobal = fals
         }
     } finally {
         exitSimGeneratingMode();
-        if (isGlobal) {
-            if (S.currentView === 'globalDetail') renderGlobalDetailView();
-        } else {
-            if (S.currentView === 'detail' && S.currentSimId === sim.id) renderDetailView();
-        }
+        if (S.currentView === 'detail' && S.currentSimId === sim.id) renderDetailView();
     }
 }
 
@@ -528,7 +516,7 @@ export async function runSimGeneration(directive, ooc, position = SIM_POSITIONS.
 
 
 
-export function showPartRevisionDialog(sim, responseIdx, partIdx, isGlobal = false) {
+export function showPartRevisionDialog(sim, responseIdx, partIdx) {
     const key = String(responseIdx);
     const conts = sim.continuations?.[key] || [];
     const partText = partIdx === 0 ? sim.responses[responseIdx] : conts[partIdx - 1];
@@ -596,12 +584,9 @@ You are an editor. Rewrite ONLY the original_message above based on the feedback
                     { kind: '통제광 (파트 수정)', position: SIM_POSITIONS.BOTTOM },
                     () => generateQuietPrompt({ quietPrompt: revisionPrompt, quietToLoud: true }))
             );
-            // preset 전환 중 chat_metadata 가 바뀌었을 수 있어 live sim 재조회 (비글로벌)
-            let target = sim;
-            if (!isGlobal) {
-                const liveSims = getSimulations();
-                target = (S.tempSim && S.tempSim.id === sim.id) ? S.tempSim : liveSims.find(s => s.id === sim.id) || sim;
-            }
+            // preset 전환 중 chat_metadata 가 바뀌었을 수 있어 live sim 재조회
+            const liveSims = getSimulations();
+            const target = (S.tempSim && S.tempSim.id === sim.id) ? S.tempSim : liveSims.find(s => s.id === sim.id) || sim;
             // 해당 파트를 교체
             if (partIdx === 0) {
                 target.responses[responseIdx] = rawResponse;
@@ -611,13 +596,8 @@ You are an editor. Rewrite ONLY the original_message above based on the feedback
             // 번역 캐시 무효화
             if (target.partTranslations?.[key]) delete target.partTranslations[key][String(partIdx)];
 
-            if (isGlobal) {
-                saveSettingsDebounced();
-                renderGlobalDetailView();
-            } else {
-                if (!S.tempSim || S.tempSim.id !== target.id) saveSimulations();
-                renderDetailView();
-            }
+            if (!S.tempSim || S.tempSim.id !== target.id) saveSimulations();
+            renderDetailView();
             toastr.success('파트가 수정되었습니다.', '통제광');
         } catch (err) {
             if (S.simAborted) {

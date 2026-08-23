@@ -18,6 +18,8 @@ import {
     eventSource,
     event_types,
     saveSettingsDebounced,
+    saveChatDebounced,
+    chat_metadata,
 } from '../../../../script.js';
 import {
     EXTENSION_NAME,
@@ -44,7 +46,9 @@ import { S } from './state.js';
 import {
     getSimulations,
     getCurrentChatKey,
+    saveSimulations,
     syncToGlobal,
+    migrateLegacyGlobalStore,
 } from './store.js';
 import { setupMessageCapture } from './capture.js';
 import {
@@ -63,10 +67,74 @@ import {
     buildWandButtonHTML,
 } from './templates.js';
 
+/**
+ * 1.5.0 저장 구조 변경 마이그레이션. 결과가 있을 때만 알린다.
+ * 백업이 실패하면 store.js 가 아무것도 지우지 않으므로 다음 실행에서 다시 시도된다.
+ */
+async function runLegacyStoreMigration() {
+    try {
+        const result = await migrateLegacyGlobalStore();
+        if (!result || typeof toastr === 'undefined') return;
+        toastr.info(
+            `시뮬 기록을 설정 파일에서 분리했습니다 (시뮬 ${result.simCount}개 / 채팅 ${result.chatCount}개).<br>이전 사본은 <code>${escapeHtml(result.path)}</code> 에 백업해 뒀습니다.`,
+            '시뮬 매니저',
+            { timeOut: 20000, extendedTimeOut: 10000, escapeHtml: false },
+        );
+    } catch (e) {
+        console.error(DEBUG_PREFIX, 'Legacy store migration failed:', e);
+    }
+}
+
+/**
+ * 브랜치/가져오기로 만든 채팅은 부모의 chat_metadata 를 통째로 물려받는다
+ * (script.js 의 saveChat 이 `{ ...chat_metadata, ...withMetadata }` 로 저장).
+ * 그래서 시뮬 기록까지 그대로 복제돼 채팅 파일이 두 배가 된다.
+ * 브랜치 직전에 끼어들 훅이 없어서 막지는 못하고, 처음 열렸을 때 한 번만 물어본다.
+ */
+function offerBranchSimCleanup() {
+    try {
+        const parent = chat_metadata?.main_chat;
+        if (!parent) return;                                   // 브랜치가 아님
+        const store = chat_metadata[EXTENSION_NAME];
+        if (!Array.isArray(store?.simulations) || store.simulations.length === 0) return;
+        // 부모 이름까지 같이 기록한다. 그냥 플래그면 손자 브랜치가 그것마저 물려받아
+        // 한 번도 안 물어보게 된다.
+        if (store.branchCheckedFor === parent) return;
+
+        const count = store.simulations.length;
+        store.branchCheckedFor = parent;
+        saveChatDebounced();
+
+        if (typeof toastr === 'undefined') return;
+        toastr.warning(
+            `이 채팅은 브랜치라 부모의 시뮬 ${count}개를 그대로 물려받았습니다.<br>비우려면 이 알림을 누르세요 (부모 채팅은 그대로입니다).`,
+            '시뮬 매니저',
+            {
+                timeOut: 0,
+                extendedTimeOut: 0,
+                closeButton: true,
+                escapeHtml: false,
+                onclick: () => {
+                    const ask = `이 브랜치에 복사된 시뮬 ${count}개를 비웁니다.\n부모 채팅의 기록은 그대로입니다. 계속할까요?`;
+                    if (!confirm(ask)) return;
+                    getSimulations().length = 0;
+                    saveSimulations();
+                    toastr.success(`시뮬 ${count}개를 비웠습니다.`, '시뮬 매니저');
+                },
+            },
+        );
+    } catch (e) {
+        console.error(DEBUG_PREFIX, 'Branch check failed:', e);
+    }
+}
+
 (function init() {
     ensureSettings();
 
-    // 기존 채팅 데이터 → 글로벌로 초기 동기화
+    // 1.5.0: 설정 파일에 박혀 있던 시뮬 본문 사본을 백업하고 걷어낸다 (1회)
+    runLegacyStoreMigration();
+
+    // 기존 채팅 데이터 → 인덱스 초기 동기화
     try {
         const chatKey = getCurrentChatKey();
         if (chatKey) {
@@ -315,7 +383,7 @@ import {
         S.currentSimId = null;
         S.isEditingPrompt = false;
 
-        // 새 채팅 로드 후 글로벌 동기화
+        // 새 채팅 로드 후 인덱스 동기화 + 브랜치 중복 확인
         setTimeout(() => {
             try {
                 const chatKey = getCurrentChatKey();
@@ -325,6 +393,7 @@ import {
                         syncToGlobal();
                     }
                 }
+                offerBranchSimCleanup();
             } catch (e) { /* ignore */ }
         }, 500);
     });

@@ -10,7 +10,6 @@ import {
 import { ensureSettings } from './config.js';
 import { S } from './state.js';
 import { renderDetailView } from './views/detail.js';
-import { renderGlobalListView } from './views/global.js';
 import { renderListView } from './views/list.js';
 
 // 뷰 전환 시에만 sim-content 스크롤을 맨 위로. 같은 뷰의 인-플레이스 재렌더는 스크롤 보존.
