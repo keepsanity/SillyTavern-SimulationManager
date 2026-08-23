@@ -56,10 +56,39 @@ export function saveSimulations() {
 // ============================================
 // 채팅 식별
 // ============================================
+/**
+ * 그룹은 방 하나에 채팅이 여러 개다. `group.chats` 가 채팅 id 목록이고
+ * `group.chat_id` 가 지금 열려 있는 것. /api/chats/group/get 도 그룹 id 가 아니라
+ * **채팅 id** 를 받는다(<id>.jsonl 을 그대로 읽음). 그룹 id 로 키를 잡으면
+ * 같은 그룹의 채팅들이 한 칸을 덮어쓰고, 불러올 때도 엉뚱한 파일을 읽게 된다.
+ */
+function getGroup(context, groupId) {
+    return (context.groups || []).find(g => String(g.id) === String(groupId));
+}
+
+function groupChatIds(group) {
+    if (Array.isArray(group?.chats) && group.chats.length) return group.chats.map(String);
+    return group?.chat_id ? [String(group.chat_id)] : [];
+}
+
+function groupChatKey(groupId, chatId) {
+    return `group_${groupId}_${chatId}`;
+}
+
+/** 채팅이 여럿인 그룹은 어느 채팅인지 구분되게 이름에 붙여 준다. */
+function groupChatLabel(group, chatId, chatCount) {
+    const name = group?.name || '그룹 채팅';
+    return chatCount > 1 ? `${name} / ${chatId}` : name;
+}
+
 export function getCurrentChatKey() {
     try {
         const context = getContext();
-        if (context.groupId) return `group_${context.groupId}`;
+        if (context.groupId) {
+            const group = getGroup(context, context.groupId);
+            const chatId = group?.chat_id || context.chatId || context.groupId;
+            return groupChatKey(context.groupId, chatId);
+        }
         // 캐릭터 이름 + 채팅 파일명 (스캔 키와 동일 형식)
         const charIdx = context.characterId;
         const characters = context.characters || [];
@@ -80,6 +109,8 @@ export function getCurrentChatDisplayName() {
     try {
         const context = getContext();
         if (context.groupId) {
+            const group = getGroup(context, context.groupId);
+            if (group) return groupChatLabel(group, group.chat_id, groupChatIds(group).length);
             return context.name2 || '그룹 채팅';
         }
         const charIdx = context.characterId;
@@ -102,7 +133,11 @@ export function getCurrentChatDisplayName() {
 function getCurrentChatSource() {
     try {
         const context = getContext();
-        if (context.groupId) return { groupId: String(context.groupId) };
+        if (context.groupId) {
+            const group = getGroup(context, context.groupId);
+            const chatId = group?.chat_id || context.chatId || context.groupId;
+            return { groupId: String(context.groupId), groupChatId: String(chatId) };
+        }
         const char = (context.characters || [])[context.characterId];
         if (char?.avatar) {
             return {
@@ -207,12 +242,13 @@ async function fetchSimsFromChatFile(entry) {
     const headers = getRequestHeaders();
     try {
         let res;
-        if (entry.groupId) {
+        if (entry.groupChatId || entry.groupId) {
+            // 그룹은 채팅 id 로 조회한다 (그룹 id 로 넣으면 다른 파일을 읽는다).
             res = await fetch('/api/chats/group/get', {
                 method: 'POST',
                 headers,
                 cache: 'no-cache',
-                body: JSON.stringify({ id: entry.groupId }),
+                body: JSON.stringify({ id: entry.groupChatId || entry.groupId }),
             });
         } else if (entry.avatar && entry.fileName) {
             res = await fetch('/api/chats/get', {
@@ -295,24 +331,33 @@ export async function scanAllChatsForSimulations() {
             }
         }
 
-        // 3. 그룹 채팅 — 그룹은 수가 적어 파일을 통째로 받아도 부담이 적다
+        // 3. 그룹 채팅 — 그룹당 채팅이 여러 개다. 그룹 수는 적으니 채팅마다 파일을 받아도 된다
         for (const group of (context.groups || [])) {
             if (!group?.id) continue;
-            const chatKey = `group_${group.id}`;
-            if (chatKey === currentKey) continue;
+            const chatIds = groupChatIds(group);
 
-            try {
-                const res = await fetch('/api/chats/group/get', {
-                    method: 'POST',
-                    headers,
-                    cache: 'no-cache',
-                    body: JSON.stringify({ id: group.id }),
-                });
-                if (!res.ok) { complete = false; continue; }
-                record(chatKey, group.name || '그룹 채팅', readSimsFromHeader(await res.json()), { groupId: String(group.id) });
-            } catch (e) {
-                complete = false;
-                continue;
+            for (const chatId of chatIds) {
+                const chatKey = groupChatKey(group.id, chatId);
+                if (chatKey === currentKey) continue;
+
+                try {
+                    const res = await fetch('/api/chats/group/get', {
+                        method: 'POST',
+                        headers,
+                        cache: 'no-cache',
+                        body: JSON.stringify({ id: chatId }),
+                    });
+                    if (!res.ok) { complete = false; continue; }
+                    record(
+                        chatKey,
+                        groupChatLabel(group, chatId, chatIds.length),
+                        readSimsFromHeader(await res.json()),
+                        { groupId: String(group.id), groupChatId: String(chatId) },
+                    );
+                } catch (e) {
+                    complete = false;
+                    continue;
+                }
             }
         }
 
@@ -327,8 +372,9 @@ export async function scanAllChatsForSimulations() {
             }
         }
 
+        // 목록을 다 못 읽었으면 인덱스를 믿을 수 없다. stale 을 유지해 다음에 다시 스캔시킨다.
         ensureSettings();
-        extension_settings[EXTENSION_NAME].globalIndexStale = false;
+        if (complete) extension_settings[EXTENSION_NAME].globalIndexStale = false;
         saveSettingsDebounced();
         return totalFound;
     } catch (e) {
@@ -461,7 +507,8 @@ async function collectExistingChatKeys() {
     }
 
     for (const group of (context.groups || [])) {
-        if (group?.id) keys.add(`group_${group.id}`);
+        if (!group?.id) continue;
+        for (const chatId of groupChatIds(group)) keys.add(groupChatKey(group.id, chatId));
     }
 
     return { keys, complete };

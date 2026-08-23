@@ -85,6 +85,11 @@ async function runLegacyStoreMigration() {
     }
 }
 
+/** 토스트 하나만 닫는다. toastr 구현이 달라도 터지지 않게 감싼다. */
+function dismiss(toast) {
+    try { toastr.clear(toast); } catch (e) { /* 무시 */ }
+}
+
 /**
  * 브랜치/가져오기로 만든 채팅은 부모의 chat_metadata 를 통째로 물려받는다
  * (script.js 의 saveChat 이 `{ ...chat_metadata, ...withMetadata }` 로 저장).
@@ -102,24 +107,38 @@ function offerBranchSimCleanup() {
         if (store.branchCheckedFor === parent) return;
 
         const count = store.simulations.length;
+        // 이 알림이 가리키는 방. 알림은 저절로 안 사라지므로 클릭 시점에 대조해야 한다.
+        const targetKey = getCurrentChatKey();
         store.branchCheckedFor = parent;
         saveChatDebounced();
 
         if (typeof toastr === 'undefined') return;
-        toastr.warning(
+        const toast = toastr.warning(
             `이 채팅은 브랜치라 부모의 시뮬 ${count}개를 그대로 물려받았습니다.<br>비우려면 이 알림을 누르세요 (부모 채팅은 그대로입니다).`,
             '시뮬 매니저',
             {
                 timeOut: 0,
                 extendedTimeOut: 0,
                 closeButton: true,
+                tapToDismiss: false,
                 escapeHtml: false,
                 onclick: () => {
-                    const ask = `이 브랜치에 복사된 시뮬 ${count}개를 비웁니다.\n부모 채팅의 기록은 그대로입니다. 계속할까요?`;
+                    // 알림이 떠 있는 사이에 다른 채팅으로 옮겼을 수 있다.
+                    // 그대로 비우면 엉뚱한 방의 기록을 지우게 된다.
+                    if (getCurrentChatKey() !== targetKey) {
+                        toastr.info('그 브랜치에서 나와 있어 취소했습니다. 다시 열고 눌러주세요.', '시뮬 매니저');
+                        return;
+                    }
+                    // 알림이 떠 있는 동안 시뮬이 늘었을 수 있으니 지금 개수로 묻는다.
+                    const sims = getSimulations();
+                    const now = sims.length;
+                    if (now === 0) { dismiss(toast); return; }
+                    const ask = `이 브랜치의 시뮬 ${now}개를 비웁니다.\n부모 채팅의 기록은 그대로입니다. 계속할까요?`;
                     if (!confirm(ask)) return;
-                    getSimulations().length = 0;
+                    sims.length = 0;
                     saveSimulations();
-                    toastr.success(`시뮬 ${count}개를 비웠습니다.`, '시뮬 매니저');
+                    dismiss(toast);
+                    toastr.success(`시뮬 ${now}개를 비웠습니다.`, '시뮬 매니저');
                 },
             },
         );

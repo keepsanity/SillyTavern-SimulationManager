@@ -20,8 +20,10 @@ const defaultSettings = {
     // 모아보기 인덱스: { chatKey: { chatName, count, lastAt, avatar?, chName?, fileName?, groupId? } }
     // 시뮬 본문은 여기 안 들어간다 — 원본은 채팅 파일, 본문 캐시는 store.js 메모리.
     globalIndex: {},
-    // 인덱스가 구버전에서 넘어와 출처 정보가 없는 상태면 true (다음 모아보기에서 스캔)
+    // 인덱스를 다시 만들어야 하는 상태면 true (다음 모아보기에서 스캔)
     globalIndexStale: false,
+    // 인덱스 키 형식 버전. 안 맞으면 stale 로 올려 재스캔시킨다.
+    globalIndexVersion: 0,
     // 번역 설정
     translationEnabled: false,
     translationTargetLang: '한국어',
@@ -46,6 +48,13 @@ const defaultSettings = {
     loreLastLorebook: '',               // 마지막으로 저장한 로어북 이름
 };
 
+/**
+ * 모아보기 인덱스 키 형식 버전.
+ * 1: 최초 (그룹은 `group_<groupId>`)
+ * 2: 그룹 키에 채팅 id 포함 — 그룹 하나에 채팅이 여럿이라 덮어써지고 있었다
+ */
+const GLOBAL_INDEX_VERSION = 2;
+
 export const PROMPT_SORT_ORDERS = ['newest', 'oldest', 'name'];
 
 export function ensureSettings() {
@@ -57,6 +66,11 @@ export function ensureSettings() {
     if (typeof s.notificationsEnabled !== 'boolean') s.notificationsEnabled = true;
     if (!s.globalIndex || typeof s.globalIndex !== 'object') s.globalIndex = {};
     if (typeof s.globalIndexStale !== 'boolean') s.globalIndexStale = false;
+    // 키 형식이 바뀌면 예전 키가 유령으로 남는다. 재스캔하면 스캔이 쳐낸다.
+    if (s.globalIndexVersion !== GLOBAL_INDEX_VERSION) {
+        s.globalIndexVersion = GLOBAL_INDEX_VERSION;
+        s.globalIndexStale = true;
+    }
     // s.globalSimulations(구버전 본문 사본)는 여기서 건드리지 않는다.
     // store.js 의 migrateLegacyGlobalStore() 가 백업한 뒤 지운다.
     if (typeof s.translationEnabled !== 'boolean') s.translationEnabled = false;
