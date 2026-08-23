@@ -85,16 +85,16 @@ async function runLegacyStoreMigration() {
     }
 }
 
-/** 토스트 하나만 닫는다. toastr 구현이 달라도 터지지 않게 감싼다. */
-function dismiss(toast) {
-    try { toastr.clear(toast); } catch (e) { /* 무시 */ }
-}
-
 /**
  * 브랜치/가져오기로 만든 채팅은 부모의 chat_metadata 를 통째로 물려받는다
  * (script.js 의 saveChat 이 `{ ...chat_metadata, ...withMetadata }` 로 저장).
  * 그래서 시뮬 기록까지 그대로 복제돼 채팅 파일이 두 배가 된다.
- * 브랜치 직전에 끼어들 훅이 없어서 막지는 못하고, 처음 열렸을 때 한 번만 물어본다.
+ * 브랜치 직전에 끼어들 훅이 없어서 막지는 못하고, 열렸을 때 비울지 물어본다.
+ *
+ * '다시 묻지 않음' 은 사용자가 결론을 냈을 때만 기록한다 — 비웠거나, 닫기(×)를 눌렀거나.
+ * toastr 는 onclick 이 붙어 있으면 핸들러가 끝난 뒤 무조건 알림을 닫기 때문에
+ * (`!E.onclick && E.tapToDismiss` — tapToDismiss 는 onclick 이 없을 때만 본다),
+ * 알림을 띄우면서 미리 기록해 두면 결론을 못 낸 클릭 한 번에 기회가 영영 사라진다.
  */
 function offerBranchSimCleanup() {
     try {
@@ -109,35 +109,42 @@ function offerBranchSimCleanup() {
         const count = store.simulations.length;
         // 이 알림이 가리키는 방. 알림은 저절로 안 사라지므로 클릭 시점에 대조해야 한다.
         const targetKey = getCurrentChatKey();
-        store.branchCheckedFor = parent;
-        saveChatDebounced();
+
+        /** 이 방에서는 다시 묻지 않음. store 는 그 방의 메타데이터라 방을 옮겼으면 손대면 안 된다. */
+        const markResolved = () => {
+            if (getCurrentChatKey() !== targetKey) return;
+            store.branchCheckedFor = parent;
+            saveChatDebounced();
+        };
 
         if (typeof toastr === 'undefined') return;
-        const toast = toastr.warning(
-            `이 채팅은 브랜치라 부모의 시뮬 ${count}개를 그대로 물려받았습니다.<br>비우려면 이 알림을 누르세요 (부모 채팅은 그대로입니다).`,
+        toastr.warning(
+            `이 채팅은 브랜치라 부모의 시뮬 ${count}개를 그대로 물려받았습니다.<br>비우려면 이 알림을 누르세요 (부모 채팅은 그대로입니다).<br><small>닫기(×)를 누르면 이 방에서는 다시 묻지 않습니다.</small>`,
             '시뮬 매니저',
             {
                 timeOut: 0,
                 extendedTimeOut: 0,
                 closeButton: true,
-                tapToDismiss: false,
                 escapeHtml: false,
+                // × = 그냥 두겠다는 결론
+                onCloseClick: markResolved,
                 onclick: () => {
                     // 알림이 떠 있는 사이에 다른 채팅으로 옮겼을 수 있다.
                     // 그대로 비우면 엉뚱한 방의 기록을 지우게 된다.
+                    // 결론으로 치지 않으니 그 브랜치를 다시 열면 알림이 또 뜬다.
                     if (getCurrentChatKey() !== targetKey) {
-                        toastr.info('그 브랜치에서 나와 있어 취소했습니다. 다시 열고 눌러주세요.', '시뮬 매니저');
+                        toastr.info('그 브랜치에서 나와 있어 취소했습니다. 다시 열면 또 물어봅니다.', '시뮬 매니저');
                         return;
                     }
                     // 알림이 떠 있는 동안 시뮬이 늘었을 수 있으니 지금 개수로 묻는다.
                     const sims = getSimulations();
                     const now = sims.length;
-                    if (now === 0) { dismiss(toast); return; }
+                    if (now === 0) return;
                     const ask = `이 브랜치의 시뮬 ${now}개를 비웁니다.\n부모 채팅의 기록은 그대로입니다. 계속할까요?`;
-                    if (!confirm(ask)) return;
+                    if (!confirm(ask)) return;   // 취소도 결론이 아니다 — 다시 열면 또 묻는다
                     sims.length = 0;
+                    markResolved();
                     saveSimulations();
-                    dismiss(toast);
                     toastr.success(`시뮬 ${now}개를 비웠습니다.`, '시뮬 매니저');
                 },
             },
