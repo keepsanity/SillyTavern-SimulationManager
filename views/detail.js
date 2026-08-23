@@ -582,8 +582,14 @@ export function renderResponseParts(sim, responseIdx, currentEditPart = null, is
         // 모아보기(isGlobal)는 읽기 전용 — 내용을 바꾸는 버튼은 내보내지 않는다.
         // 예전엔 isGlobal 이 id 접두사만 바꿔서, 디테일 뷰에 파트 기능을 추가할 때마다
         // 모아보기에도 그대로 딸려 들어갔다. 거기서 한 수정은 채팅 파일에 안 남는다.
+        // 이미 저장돼 있는 번역문을 보는 건 수정이 아니라 읽기 전용에서도 허용한다.
+        // (새로 번역하는 part-translate 만 뺀다 — 그 결과는 채팅 파일에 안 남으니까)
+        const viewTranslationBtn = hasTranslation
+            ? `<button class="sim-btn-icon sim-btn-icon-sm" data-action="part-view-translation" data-part="${partIdx}" title="${S.showTranslated ? '원문 보기' : '번역 보기'}"><i class="fa-solid fa-language"></i> ${S.showTranslated ? '원문' : '번역'}</button>`
+            : '';
         const actions = isGlobal
             ? `<div class="sim-part-actions">
+            ${viewTranslationBtn}
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-copy" data-part="${partIdx}" title="복사"><i class="fa-solid fa-copy"></i></button>
         </div>`
             : `<div class="sim-part-actions">

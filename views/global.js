@@ -326,10 +326,21 @@ export function renderGlobalDetailView() {
         }
     });
 
-    // 읽기 전용이라 파트 액션은 복사뿐이다.
+    // 읽기 전용 — 복사와, 이미 저장돼 있는 번역문 보기만.
     document.getElementById('sim-gv-response-display')?.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-action="part-copy"]');
+        const btn = e.target.closest('[data-action]');
         if (!btn) return;
-        copyTextToClipboard(getPartText(sim, currentIdx, parseInt(btn.dataset.part, 10)));
+        const partIdx = parseInt(btn.dataset.part, 10);
+
+        switch (btn.dataset.action) {
+            case 'part-copy':
+                copyTextToClipboard(getPartText(sim, currentIdx, partIdx));
+                break;
+            case 'part-view-translation':
+                // 저장된 번역문 ↔ 원문 전환. 새로 번역하지는 않는다.
+                S.showTranslated = !S.showTranslated;
+                renderGlobalDetailView();
+                break;
+        }
     });
 }
