@@ -324,7 +324,10 @@ export async function handleMultiSendSimulation(targets, opts) {
             updateMultiSendPanel(i, targets.length, target.name, '시뮬 생성 중...');
 
             // {{char}}/{{user}} 가 이 방 기준으로 치환되도록 전환 후 재계산
-            const resolved = substituteParams(applySwap(opts.rawPrompt, opts.chosenSwapCharUser, opts.chosenSwapPronouns));
+            // 입력한 단어는 그 방 사람 이름이라 현재 방에만 적용
+            const isOrigin = !!origin && sameLocation(target, origin);
+            const aliases = isOrigin ? { char: opts.chosenCharAlias || '', user: opts.chosenUserAlias || '' } : null;
+            const resolved = substituteParams(applySwap(opts.rawPrompt, opts.chosenSwapCharUser, opts.chosenSwapPronouns, aliases));
 
             const sim = {
                 id: `sim_${uuidv4()}`,
@@ -338,6 +341,8 @@ export async function handleMultiSendSimulation(targets, opts) {
                 injectPosition: opts.chosenPosition,
                 swapCharUser: opts.chosenSwapCharUser,
                 swapPronouns: opts.chosenSwapPronouns,
+                ...(aliases?.char ? { charAlias: aliases.char } : {}),
+                ...(aliases?.user ? { userAlias: aliases.user } : {}),
             };
 
             S.simAborted = false;

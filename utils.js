@@ -33,7 +33,10 @@ function preserveCase(sourceWord, targetWord) {
     return targetWord.toLowerCase();
 }
 
-export function applySwap(text, swapCharUser, swapPronouns) {
+/**
+ * @param {{char?: string, user?: string}} [aliases] 스왑이 끝난 뒤의 {{char}}/{{user}} 를 이 단어로 바꾼다. 빈 값은 매크로 유지.
+ */
+export function applySwap(text, swapCharUser, swapPronouns, aliases = null) {
     if (!text) return text;
     let out = text;
     if (swapCharUser) {
@@ -47,7 +50,20 @@ export function applySwap(text, swapCharUser, swapPronouns) {
             return replacement ? preserveCase(match, replacement) : match;
         });
     }
+    const charAlias = aliases?.char?.trim();
+    const userAlias = aliases?.user?.trim();
+    if (charAlias || userAlias) {
+        // 대명사 교체 뒤에 넣어야 입력한 단어가 대명사 교체에 안 걸린다
+        out = out.replace(/\{\{(char|user)\}\}/gi, (match, name) => {
+            const alias = name.toLowerCase() === 'char' ? charAlias : userAlias;
+            return alias || match;
+        });
+    }
     return out;
+}
+
+export function getSimAliases(sim) {
+    return { char: sim?.charAlias || '', user: sim?.userAlias || '' };
 }
 
 // ============================================

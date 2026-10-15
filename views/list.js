@@ -229,6 +229,15 @@ export function renderCreateView() {
                     <input type="checkbox" id="sim-swap-pronouns" />
                     <span>대명사 교체 (he/she, him/her, ...)</span>
                 </label>
+                <div class="sim-field">
+                    <label>{{char}} 대신 쓸 단어</label>
+                    <input type="text" class="sim-prompt-search" id="sim-char-alias" placeholder="비우면 원래 이름" />
+                </div>
+                <div class="sim-field">
+                    <label>{{user}} 대신 쓸 단어</label>
+                    <input type="text" class="sim-prompt-search" id="sim-user-alias" placeholder="비우면 원래 이름" />
+                </div>
+                <span class="sim-create-hint">교체 체크가 끝난 결과에 적용됩니다. 여러 방에 보낼 때는 현재 방에만 적용됩니다.</span>
             </div>
         </details>
 
@@ -353,6 +362,8 @@ export function renderCreateView() {
         setVal('sim-position-select', d.chosenPosition);
         setChecked('sim-swap-charuser', d.chosenSwapCharUser);
         setChecked('sim-swap-pronouns', d.chosenSwapPronouns);
+        setVal('sim-char-alias', d.chosenCharAlias || '');
+        setVal('sim-user-alias', d.chosenUserAlias || '');
         setChecked('sim-no-save-prompt', d.noSavePrompt);
 
         // 프리셋을 먼저 되돌린 뒤 토글 목록을 다시 만들어야 토글 선택값이 살아난다
@@ -383,6 +394,7 @@ export function renderCreateView() {
             chosenPresetName: value('sim-preset-select'), chosenTogglePresetName: value('sim-toggle-preset-select'),
             chosenPosition: value('sim-position-select'), chosenSwapCharUser: checked('sim-swap-charuser'),
             chosenSwapPronouns: checked('sim-swap-pronouns'), noSavePrompt: checked('sim-no-save-prompt'),
+            chosenCharAlias: value('sim-char-alias'), chosenUserAlias: value('sim-user-alias'),
             loadedPromptId: value('sim-load-prompt'), multiSendKeys: [...S.multiSendSelKeys],
         };
     };

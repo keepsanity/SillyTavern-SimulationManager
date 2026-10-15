@@ -120,6 +120,8 @@ export function renderDetailView() {
     if (sim.swapCharUser) swapBits.push('{{char}}↔{{user}}');
     if (sim.swapPronouns) swapBits.push('대명사');
     if (swapBits.length) summaryParts.push(`<span style="color:var(--SmartThemeQuoteColor, #7c83ff);">✓ 스왑: <b>${swapBits.join(' + ')}</b></span>`);
+    const aliasLabel = getAliasSummary(sim);
+    if (aliasLabel) summaryParts.push(aliasLabel);
 
     const settingsBoxContent = `
         <div class="sim-detail-prompt-header" id="sim-edit-settings-btn" style="cursor:pointer;">
@@ -153,6 +155,14 @@ export function renderDetailView() {
                 <input type="checkbox" id="sim-detail-swap-pronouns" ${sim.swapPronouns ? 'checked' : ''} />
                 <span>대명사 교체 (he/she, him/her, ...)</span>
             </label>
+            <div>
+                <label style="font-size:11px;">{{char}} 대신 쓸 단어</label>
+                <input type="text" class="sim-prompt-search" id="sim-detail-char-alias" placeholder="비우면 원래 이름" />
+            </div>
+            <div>
+                <label style="font-size:11px;">{{user}} 대신 쓸 단어</label>
+                <input type="text" class="sim-prompt-search" id="sim-detail-user-alias" placeholder="비우면 원래 이름" />
+            </div>
         </div>`;
 
     const html = `
@@ -305,6 +315,8 @@ export function renderDetailView() {
     const detailPositionSelect = document.getElementById('sim-detail-position-select');
     const detailSwapCharUser = document.getElementById('sim-detail-swap-charuser');
     const detailSwapPronouns = document.getElementById('sim-detail-swap-pronouns');
+    const detailCharAlias = document.getElementById('sim-detail-char-alias');
+    const detailUserAlias = document.getElementById('sim-detail-user-alias');
 
     const saveSimIfNotTemp = () => { if (!S.tempSim || S.tempSim.id !== sim.id) saveSimulations(); };
     const refreshSummary = () => {
@@ -323,6 +335,8 @@ export function renderDetailView() {
         if (sim.swapCharUser) bits.push('{{char}}↔{{user}}');
         if (sim.swapPronouns) bits.push('대명사');
         if (bits.length) parts.push(`<span style="color:var(--SmartThemeQuoteColor, #7c83ff);">✓ 스왑: <b>${bits.join(' + ')}</b></span>`);
+        const aliasLbl = getAliasSummary(sim);
+        if (aliasLbl) parts.push(aliasLbl);
         target.innerHTML = `⚙ ${parts.join(' / ')}`;
     };
 
@@ -403,6 +417,17 @@ export function renderDetailView() {
         saveSimIfNotTemp();
         refreshSummary();
     });
+    if (detailCharAlias) detailCharAlias.value = sim.charAlias || '';
+    if (detailUserAlias) detailUserAlias.value = sim.userAlias || '';
+    const bindAlias = (input, key) => input?.addEventListener('change', () => {
+        const val = input.value.trim();
+        if (val) sim[key] = val;
+        else delete sim[key];
+        saveSimIfNotTemp();
+        refreshSummary();
+    });
+    bindAlias(detailCharAlias, 'charAlias');
+    bindAlias(detailUserAlias, 'userAlias');
 
     // 새 챗으로 시작
     document.getElementById('sim-new-chat-btn')?.addEventListener('click', async () => {
@@ -635,4 +660,11 @@ export function getPartText(sim, responseIdx, partIdx) {
     const original = parts[partIdx] || '';
     const translated = sim.partTranslations?.[String(responseIdx)]?.[String(partIdx)];
     return (S.showTranslated && translated) ? translated : original;
+}
+
+function getAliasSummary(sim) {
+    const bits = [];
+    if (sim.charAlias) bits.push(`{{char}}→${escapeHtml(sim.charAlias)}`);
+    if (sim.userAlias) bits.push(`{{user}}→${escapeHtml(sim.userAlias)}`);
+    return bits.length ? `<span style="color:var(--SmartThemeQuoteColor, #7c83ff);">✓ 이름: <b>${bits.join(', ')}</b></span>` : '';
 }

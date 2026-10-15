@@ -185,6 +185,8 @@ export async function handleSendSimulation() {
     const chosenPosition = normalizeSimPosition(document.getElementById('sim-position-select')?.value);
     const chosenSwapCharUser = !!document.getElementById('sim-swap-charuser')?.checked;
     const chosenSwapPronouns = !!document.getElementById('sim-swap-pronouns')?.checked;
+    const chosenCharAlias = document.getElementById('sim-char-alias')?.value.trim() || '';
+    const chosenUserAlias = document.getElementById('sim-user-alias')?.value.trim() || '';
 
     // 프리셋 선택값 캡처
     const chosenPresetName = document.getElementById('sim-preset-select')?.value || '';
@@ -210,6 +212,8 @@ export async function handleSendSimulation() {
             chosenPosition,
             chosenSwapCharUser,
             chosenSwapPronouns,
+            chosenCharAlias,
+            chosenUserAlias,
         });
         return;
     }
@@ -223,6 +227,8 @@ export async function handleSendSimulation() {
         chosenPosition,
         chosenSwapCharUser,
         chosenSwapPronouns,
+        chosenCharAlias,
+        chosenUserAlias,
         chosenPresetName,
         chosenTogglePresetName,
     });
@@ -241,6 +247,8 @@ export async function handleSendSimulation() {
  * @param {string} [opts.chosenPosition]        SIM_POSITIONS.* 주입 위치
  * @param {boolean} [opts.chosenSwapCharUser=false]
  * @param {boolean} [opts.chosenSwapPronouns=false]
+ * @param {string} [opts.chosenCharAlias='']   {{char}} 대신 쓸 단어
+ * @param {string} [opts.chosenUserAlias='']   {{user}} 대신 쓸 단어
  * @param {string} [opts.chosenPresetName='']
  * @param {string} [opts.chosenTogglePresetName='']
  * @param {boolean} [opts.ui=true]              뷰 전환·작성화면 복원 등 팝업 UI 를 건드릴지.
@@ -257,6 +265,8 @@ export async function sendSimulation({
     chosenPosition = undefined,
     chosenSwapCharUser = false,
     chosenSwapPronouns = false,
+    chosenCharAlias = '',
+    chosenUserAlias = '',
     chosenPresetName = '',
     chosenTogglePresetName = '',
     ui = true,
@@ -267,7 +277,7 @@ export async function sendSimulation({
     const originChatKey = getCurrentChatKey();
 
     // 스왑 먼저 적용한 뒤 substituteParams
-    const resolvedPrompt = substituteParams(applySwap(rawPrompt, chosenSwapCharUser, chosenSwapPronouns));
+    const resolvedPrompt = substituteParams(applySwap(rawPrompt, chosenSwapCharUser, chosenSwapPronouns, { char: chosenCharAlias, user: chosenUserAlias }));
 
     // 프롬프트 이름 결정
     ensureSettings();
@@ -289,6 +299,8 @@ export async function sendSimulation({
         injectPosition: chosenPosition,
         swapCharUser: chosenSwapCharUser,
         swapPronouns: chosenSwapPronouns,
+        ...(chosenCharAlias ? { charAlias: chosenCharAlias } : {}),
+        ...(chosenUserAlias ? { userAlias: chosenUserAlias } : {}),
     };
 
     if (!isTemp) {
@@ -364,6 +376,8 @@ export async function sendSimulation({
                     chosenPosition,
                     chosenSwapCharUser,
                     chosenSwapPronouns,
+                    chosenCharAlias,
+                    chosenUserAlias,
                     noSavePrompt,
                     loadedPromptId,
                 };

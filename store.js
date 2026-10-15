@@ -17,14 +17,14 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, cancelDebouncedChatSave } from '../../../../script.js';
 import { EXTENSION_NAME, DEBUG_PREFIX } from './constants.js';
 import { ensureSettings } from './config.js';
-import { applySwap } from './utils.js';
+import { applySwap, getSimAliases } from './utils.js';
 import { S } from './state.js';
 
 // ============================================
 // Sim 헬퍼
 // ============================================
 export function getEffectivePromptText(sim) {
-    return applySwap(sim?.promptText || '', !!sim?.swapCharUser, !!sim?.swapPronouns);
+    return applySwap(sim?.promptText || '', !!sim?.swapCharUser, !!sim?.swapPronouns, getSimAliases(sim));
 }
 
 /**
