@@ -71,7 +71,10 @@ export function normalizePromptText(text) {
 export function getFullResponseText(sim, responseIdx) {
     const base = sim.responses[responseIdx] || '';
     const conts = sim.continuations?.[String(responseIdx)] || [];
-    return base + conts.join('');
+    return [base, ...conts].filter(Boolean).reduce((text, part) => {
+        if (!text) return part;
+        return text + (/\s$/.test(text) || /^\s/.test(part) ? '' : '\n\n') + part;
+    }, '');
 }
 
 /**

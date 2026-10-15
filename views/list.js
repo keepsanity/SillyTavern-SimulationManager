@@ -26,6 +26,7 @@ import {
     getSimDisplayTitle,
     getSimulations,
     saveSimulations,
+    getCurrentChatKey,
 } from '../store.js';
 import { handleSendSimulation } from '../generation.js';
 import { setupMultiSendDrawer } from '../multiSend.js';
@@ -77,7 +78,8 @@ export function renderListView() {
     if (footer) { footer.innerHTML = ''; footer.classList.add('hidden'); }
 
     document.getElementById('sim-go-create')?.addEventListener('click', () => {
-        S.pendingCreateDraft = null; // 목록에서 새로 들어온 경우는 빈 화면으로
+        if (S.simGenerating) return;
+        S.pendingCreateDraft = S.createDrafts[getCurrentChatKey()] || null;
         S.currentView = 'create';
         renderCreateView();
     });
@@ -122,6 +124,7 @@ export function renderCreateView() {
     const container = document.getElementById('sim-content');
     if (!container) return;
     maybeResetContentScroll('create');
+    const draftChatKey = getCurrentChatKey();
 
     ensureSettings();
     const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
@@ -167,6 +170,7 @@ export function renderCreateView() {
             <div class="sim-field">
                 <label>내용</label>
                 <textarea class="sim-prompt-textarea sim-prompt-textarea-lg" id="sim-prompt-input" placeholder="프롬프트 내용"></textarea>
+                <small>생성·재생성은 현재 채팅 내용을 사용합니다. 생성 당시 대화는 따로 고정되지 않습니다.</small>
             </div>
         </div>
 
@@ -337,8 +341,8 @@ export function renderCreateView() {
     presetSelect?.addEventListener('change', refreshTogglePresetOptions);
 
     // 전송 취소로 돌아온 경우: 방금 보냈던 입력값 복원 (한 번만 적용)
-    if (S.pendingCreateDraft) {
-        const d = S.pendingCreateDraft;
+    if (S.pendingCreateDraft || S.createDrafts[draftChatKey]) {
+        const d = S.pendingCreateDraft || S.createDrafts[draftChatKey];
         S.pendingCreateDraft = null;
 
         const setVal = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
@@ -365,5 +369,24 @@ export function renderCreateView() {
         if (loadSelect && d.loadedPromptId && loadSelect.querySelector(`option[value="${d.loadedPromptId}"]`)) {
             loadSelect.value = d.loadedPromptId;
         }
+        if (d.multiSendKeys) {
+            S.multiSendSelKeys = new Set(d.multiSendKeys);
+            container.querySelectorAll('.sim-multisend-cb').forEach(cb => { cb.checked = S.multiSendSelKeys.has(cb.dataset.key); });
+        }
     }
+
+    const saveDraft = () => {
+        const value = id => document.getElementById(id)?.value || '';
+        const checked = id => !!document.getElementById(id)?.checked;
+        S.createDrafts[draftChatKey] = {
+            rawPrompt: value('sim-prompt-input'), customTitle: value('sim-title-input'),
+            chosenPresetName: value('sim-preset-select'), chosenTogglePresetName: value('sim-toggle-preset-select'),
+            chosenPosition: value('sim-position-select'), chosenSwapCharUser: checked('sim-swap-charuser'),
+            chosenSwapPronouns: checked('sim-swap-pronouns'), noSavePrompt: checked('sim-no-save-prompt'),
+            loadedPromptId: value('sim-load-prompt'), multiSendKeys: [...S.multiSendSelKeys],
+        };
+    };
+    const form = container.querySelector('.sim-create-view');
+    form.addEventListener('input', saveDraft);
+    form.addEventListener('change', saveDraft);
 }

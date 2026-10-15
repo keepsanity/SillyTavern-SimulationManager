@@ -60,6 +60,7 @@ import {
     renderSettingsSavedPrompts,
 } from './settingsPanel.js';
 import { registerSlashCommands } from './slashCommands.js';
+import { renderListView } from './views/list.js';
 import {
     applyBranding,
     buildPopupHTML,
@@ -397,7 +398,7 @@ function offerBranchSimCleanup() {
     if (wandMenu) {
         wandMenu.insertAdjacentHTML('beforeend', buildWandButtonHTML());
         document.getElementById('sim-manager-wand-btn')?.addEventListener('click', () => {
-            S.currentView = 'list';
+            if (!S.simGenerating) S.currentView = 'list';
             openPopup();
             wandMenu.style.display = 'none';
         });
@@ -408,6 +409,9 @@ function offerBranchSimCleanup() {
         S.currentView = 'list';
         S.currentSimId = null;
         S.isEditingPrompt = false;
+        S.pendingCreateDraft = null;
+        S.tempSim = null;
+        if (document.getElementById('sim-manager-popup')?.classList.contains('active')) renderListView();
 
         // 새 채팅 로드 후 인덱스 동기화 + 브랜치 중복 확인
         setTimeout(() => {
@@ -436,4 +440,3 @@ function offerBranchSimCleanup() {
 
     console.log(DEBUG_PREFIX, 'Simulation Manager loaded successfully.');
 })();
-

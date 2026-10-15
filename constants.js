@@ -44,7 +44,7 @@ export const SIM_SYSTEM_INSTRUCTION = `<simulation_directive priority="critical"
 
 // 시뮬 주입 위치
 export const SIM_POSITIONS = {
-    LAST_MESSAGE: 'last_message', // chat 의 마지막 user 메시지 자리 (ghost push) — 기본
+    LAST_MESSAGE: 'last_message', // history 끝의 USER 주입 — 실제 chat 배열은 수정하지 않음
     DEPTH_1: 'depth_1',           // IN_CHAT depth 1 USER — 진짜 마지막 메시지 앞
     DEPTH_0: 'depth_0',           // IN_CHAT depth 0 USER — 진짜 마지막 메시지 뒤 (history 안)
     BOTTOM: 'bottom',             // quietPrompt — </history> 밖, 프롬프트 맨 끝

@@ -14,10 +14,11 @@
  */
 
 import { extension_settings, getContext } from '../../../extensions.js';
-import { chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders } from '../../../../script.js';
+import { chat_metadata, saveChatDebounced, saveSettingsDebounced, getRequestHeaders, cancelDebouncedChatSave } from '../../../../script.js';
 import { EXTENSION_NAME, DEBUG_PREFIX } from './constants.js';
 import { ensureSettings } from './config.js';
 import { applySwap } from './utils.js';
+import { S } from './state.js';
 
 // ============================================
 // Sim 헬퍼
@@ -51,6 +52,22 @@ export function getSimulations() {
 export function saveSimulations() {
     saveChatDebounced();
     syncToGlobal();
+}
+
+/** Core saveChat may swallow errors. Read back before reporting a generation as saved. */
+export async function saveSimulationsVerified() {
+    const key = getCurrentChatKey();
+    const source = getCurrentChatSource();
+    const expected = JSON.stringify(getSimulations());
+    S.unsavedChatKey = key;
+    cancelDebouncedChatSave();
+    await getContext().saveChat();
+    const saved = await fetchSimsFromChatFile(source);
+    if (key !== getCurrentChatKey() || JSON.stringify(saved) !== expected) {
+        throw new Error('시뮬 저장을 확인하지 못했습니다. 현재 결과를 보존한 채 다시 시도해주세요.');
+    }
+    syncToGlobal();
+    S.unsavedChatKey = null;
 }
 
 // ============================================
@@ -233,9 +250,15 @@ export async function loadSimsForChat(chatKey) {
     const entry = getGlobalIndex()[chatKey];
     if (!entry) return [];
 
-    const sims = await fetchSimsFromChatFile(entry);
-    cacheSims(chatKey, sims);
-    return sims;
+    try {
+        const sims = await fetchSimsFromChatFile(entry);
+        cacheSims(chatKey, sims);
+        return sims;
+    } catch (e) {
+        console.error(DEBUG_PREFIX, 'Failed to load sims for chat:', e);
+        // Do not cache a transient read failure as an empty chat.
+        return [];
+    }
 }
 
 async function fetchSimsFromChatFile(entry) {
@@ -266,13 +289,17 @@ async function fetchSimsFromChatFile(entry) {
             });
         } else {
             // 출처 정보가 없거나 구버전 형식인 항목 — 스캔이 다시 채워야 한다.
-            return [];
+            throw new Error('채팅 파일 출처가 없습니다.');
         }
-        if (!res.ok) return [];
-        return readSimsFromHeader(await res.json());
+        if (!res.ok) throw new Error(`채팅 읽기 실패: HTTP ${res.status}`);
+        const messages = await res.json();
+        if (!Array.isArray(messages) || !messages.length || !messages[0]?.chat_metadata) {
+            throw new Error('채팅 파일 헤더를 읽지 못했습니다.');
+        }
+        return readSimsFromHeader(messages);
     } catch (e) {
         console.error(DEBUG_PREFIX, 'Failed to load sims for chat:', e);
-        return [];
+        throw e;
     }
 }
 
@@ -331,6 +358,10 @@ export async function scanAllChatsForSimulations() {
                 if (!fileName) continue;
                 const chatKey = `${char.name}_${fileName}`;
                 if (chatKey === currentKey) continue;
+                if (!info?.chat_metadata && index[chatKey]?.count > 0) {
+                    complete = false;
+                    continue;
+                }
                 const sims = info?.chat_metadata?.[EXTENSION_NAME]?.simulations;
                 record(chatKey, fileName, sims, { avatar: char.avatar, chName: char.name, fileName });
             }
@@ -353,10 +384,15 @@ export async function scanAllChatsForSimulations() {
                         body: JSON.stringify({ id: chatId }),
                     });
                     if (!res.ok) { complete = false; continue; }
+                    const messages = await res.json();
+                    if (!Array.isArray(messages) || !messages.length || !messages[0]?.chat_metadata) {
+                        complete = false;
+                        continue;
+                    }
                     record(
                         chatKey,
                         groupChatLabel(group, chatId, chatIds.length),
-                        readSimsFromHeader(await res.json()),
+                        readSimsFromHeader(messages),
                         { groupId: String(group.id), groupChatId: String(chatId) },
                     );
                 } catch (e) {
@@ -402,7 +438,8 @@ export async function scanAllChatsForSimulations() {
  */
 export async function exportSimBackup() {
     try {
-        await scanAllChatsForSimulations(); // 최신 데이터 보장 (결과 형태는 여기선 안 쓴다)
+        const scan = await scanAllChatsForSimulations();
+        if (!scan.complete || scan.total < 0) throw new Error('일부 채팅을 읽지 못해 백업을 중단했습니다.');
         const payload = await buildBackupPayload();
         clearSimCache();                    // 전 채팅 본문을 들고 있을 이유가 없다
 
@@ -419,7 +456,10 @@ export async function exportSimBackup() {
         return payload.simCount;
     } catch (e) {
         console.error(DEBUG_PREFIX, 'Export failed:', e);
+        toastr.error(e.message, '백업 실패');
         return -1;
+    } finally {
+        clearSimCache();
     }
 }
 
@@ -430,7 +470,7 @@ async function buildBackupPayload() {
     let simCount = 0;
 
     for (const [key, entry] of Object.entries(index)) {
-        const sims = await loadSimsForChat(key);
+        const sims = key === getCurrentChatKey() ? getSimulations() : await fetchSimsFromChatFile(entry);
         if (!sims.length) continue;
         // 곧바로 직렬화하므로 복사하지 않는다 (전 채팅 분량이라 사본 하나가 그대로 최대치가 됨)
         globalSimulations[key] = { chatName: entry.chatName, simulations: sims };

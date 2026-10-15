@@ -184,7 +184,7 @@ async function switchPresetTo(presetName) {
  * 시뮬레이션용 프리셋/토글 프리셋을 임시로 적용한 뒤 fn 실행, 끝나면 원복.
  * presetName / togglePresetName 가 비어있으면 해당 항목은 변경하지 않음.
  */
-export async function withSimulationPreset(presetName, togglePresetName, fn) {
+export async function withSimulationPreset(presetName, togglePresetName, fn, shouldRestore = () => true) {
     const pm = getOpenAiPresetManager();
     const prevPresetName = pm ? pm.getSelectedPresetName() : '';
     const prevToggleSnap = captureToggleSnapshot();
@@ -213,10 +213,10 @@ export async function withSimulationPreset(presetName, togglePresetName, fn) {
         return await fn();
     } finally {
         // 원복: 프리셋 먼저, 토글 그 다음 (프리셋 전환이 토글을 다시 덮으므로)
-        if (presetSwitched && prevPresetName) {
+        if (shouldRestore() && presetSwitched && prevPresetName) {
             try { await switchPresetTo(prevPresetName); } catch (e) { console.error(DEBUG_PREFIX, 'Restore preset failed:', e); }
         }
-        if (prevToggleSnap) {
+        if (shouldRestore() && prevToggleSnap) {
             try { applyToggleSnapshot(prevToggleSnap); } catch (e) { console.error(DEBUG_PREFIX, 'Restore toggles failed:', e); }
         }
     }

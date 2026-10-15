@@ -5,14 +5,13 @@ import {
     extension_settings,
     getContext,
 } from '../../../extensions.js';
-import { saveSettingsDebounced } from '../../../../script.js';
 import {
     EXTENSION_NAME,
     DEBUG_PREFIX,
 } from './constants.js';
 import { ensureSettings } from './config.js';
 import { S } from './state.js';
-import { saveSimulations } from './store.js';
+import { getCurrentChatKey, getSimulations, saveSimulationsVerified } from './store.js';
 
 export function buildTranslationPrompt(text) {
     ensureSettings();
@@ -31,7 +30,8 @@ export function buildTranslationPrompt(text) {
  * 파트별 번역. sim.partTranslations[responseIdx][partIdx]에 저장.
  */
 export async function translatePart(sim, responseIdx, partIdx, renderFn) {
-    if (S.isTranslating) return;
+    if (S.isTranslating || S.simGenerating) return;
+    const sourceChatKey = getCurrentChatKey();
 
     if (!sim.partTranslations) sim.partTranslations = {};
     const rKey = String(responseIdx);
@@ -95,16 +95,18 @@ export async function translatePart(sim, responseIdx, partIdx, renderFn) {
             translated = response?.content || response?.message || '';
         }
 
-        if (!translated) throw new Error('번역 결과가 비어있습니다.');
+        if (typeof translated !== 'string' || !translated.trim()) throw new Error('번역 결과가 비어있습니다.');
+        if (sourceChatKey !== getCurrentChatKey()) throw new Error('채팅방이 변경되어 번역 저장을 취소했습니다.');
+        const target = S.tempSim?.id === sim.id ? S.tempSim : getSimulations().find(item => item.id === sim.id);
+        const liveText = partIdx === 0 ? target?.responses[responseIdx] : target?.continuations?.[rKey]?.[partIdx - 1];
+        if (!target || liveText !== partText) throw new Error('원문이 변경되어 번역 저장을 취소했습니다.');
 
-        sim.partTranslations[rKey][pKey] = translated;
+        target.partTranslations ||= {};
+        target.partTranslations[rKey] ||= {};
+        target.partTranslations[rKey][pKey] = translated;
         S.showTranslated = true;
 
-        if (S.currentView === 'detail') {
-            saveSimulations();
-        } else {
-            saveSettingsDebounced();
-        }
+        if (S.tempSim?.id !== target.id) await saveSimulationsVerified();
 
         toastr.success('파트 번역 완료!', '시뮬 매니저');
     } catch (err) {
@@ -113,6 +115,6 @@ export async function translatePart(sim, responseIdx, partIdx, renderFn) {
     } finally {
         S.isTranslating = false;
         S.translatingPartIdx = null;
-        renderFn();
+        if (sourceChatKey === getCurrentChatKey() && S.currentView === 'detail' && S.currentSimId === sim.id) renderFn();
     }
 }

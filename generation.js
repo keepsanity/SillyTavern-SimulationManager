@@ -18,6 +18,9 @@ import {
     printMessages,
     addOneMessage,
     stopGeneration,
+    eventSource,
+    event_types,
+    isGenerating,
 } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
 import {
@@ -36,13 +39,16 @@ import {
     getFullResponseText,
 } from './utils.js';
 import { ensureSettings } from './config.js';
-import { withSimulationPreset } from './preset.js';
+import { withSimulationPreset as applySimulationPreset } from './preset.js';
+import { appendPartRevision } from './responseData.js';
 import { withPromptIntercept } from './promptPreview.js';
 import { S } from './state.js';
 import {
     getEffectivePromptText,
     getSimulations,
     saveSimulations,
+    getCurrentChatKey,
+    saveSimulationsVerified,
 } from './store.js';
 import {
     captureCurrentLocation,
@@ -54,6 +60,51 @@ import { showSimNotification } from './popup.js';
 import { renderSettingsSavedPrompts } from './settingsPanel.js';
 import { renderDetailView } from './views/detail.js';
 import { renderCreateView } from './views/list.js';
+
+/** Guard the entire preset/request lifetime, including a switch away and back. */
+export async function withGenerationPreset(presetName, toggleName, fn) {
+    const chatKey = getCurrentChatKey();
+    let changed = false;
+    const onChanged = () => {
+        changed = true;
+        stopSimGeneration();
+    };
+    const check = () => {
+        if (changed || getCurrentChatKey() !== chatKey || S.simAborted) {
+            throw new Error('시뮬 생성이 취소되었거나 채팅방이 변경되었습니다.');
+        }
+    };
+    eventSource.on(event_types.CHAT_CHANGED, onChanged);
+    try {
+        const result = await applySimulationPreset(presetName, toggleName, () => {
+            check();
+            return fn();
+        }, () => !changed && getCurrentChatKey() === chatKey);
+        check();
+        if (typeof result !== 'string' || !result.trim()) throw new Error('생성 결과가 비어있습니다.');
+        return result;
+    } finally {
+        eventSource.removeListener(event_types.CHAT_CHANGED, onChanged);
+    }
+}
+
+export function refreshSimGeneratingButtons() {
+    if (!S.simGenerating) return;
+    const popup = document.getElementById('sim-manager-popup');
+    popup?.querySelectorAll('button, input, select, textarea').forEach(el => {
+        if (el.id !== 'sim-close') {
+            if (el.dataset.simDisabledWas === undefined) el.dataset.simDisabledWas = String(el.disabled);
+            el.disabled = true;
+        }
+    });
+    const active = document.getElementById(S.activeGenerationButton || 'sim-regenerate');
+    if (active) {
+        active.dataset.simStop = '1';
+        active.disabled = false;
+        active.classList.add('sim-btn-danger');
+        active.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 취소하기';
+    }
+}
 
 /**
  * 시뮬 생성을 중단. generateQuietPrompt 는 GENERATION_STOPPED 이벤트를 듣고 abort 한다.
@@ -78,6 +129,8 @@ export function withSimIntercept(meta, fn) {
 export function enterSimGeneratingMode(activeBtnId) {
     S.simGenerating = true;
     S.simAborted = false;
+    S.activeGenerationButton = activeBtnId;
+    refreshSimGeneratingButtons();
     for (const id of ['sim-continue', 'sim-continue-dir', 'sim-regenerate']) {
         const b = document.getElementById(id);
         if (!b) continue;
@@ -97,6 +150,11 @@ export function enterSimGeneratingMode(activeBtnId) {
  */
 export function exitSimGeneratingMode() {
     S.simGenerating = false;
+    S.activeGenerationButton = null;
+    document.querySelectorAll('[data-sim-disabled-was]').forEach(el => {
+        el.disabled = el.dataset.simDisabledWas === 'true';
+        delete el.dataset.simDisabledWas;
+    });
     for (const id of ['sim-continue', 'sim-continue-dir', 'sim-regenerate']) {
         const el = document.getElementById(id);
         if (!el) continue;
@@ -109,6 +167,7 @@ export function exitSimGeneratingMode() {
 // 전송 (신규 시뮬 생성)
 // ============================================
 export async function handleSendSimulation() {
+    if (S.simGenerating || S.multiSendRunning || isGenerating()) return;
     const promptInput = document.getElementById('sim-prompt-input');
     if (!promptInput) return;
 
@@ -203,7 +262,9 @@ export async function sendSimulation({
     ui = true,
     notify = true,
 }) {
+    if (S.simGenerating || S.multiSendRunning || isGenerating()) return null;
     chosenPosition = normalizeSimPosition(chosenPosition);
+    const originChatKey = getCurrentChatKey();
 
     // 스왑 먼저 적용한 뒤 substituteParams
     const resolvedPrompt = substituteParams(applySwap(rawPrompt, chosenSwapCharUser, chosenSwapPronouns));
@@ -214,12 +275,12 @@ export async function sendSimulation({
     const matchedPrompt = savedPrompts.find(p => p.content === rawPrompt);
     const promptName = customTitle || (matchedPrompt ? matchedPrompt.name : '');
 
-    const sims = getSimulations();
     const isTemp = noSave;
     const sim = {
         id: isTemp ? `temp_${uuidv4()}` : `sim_${uuidv4()}`,
         promptText: rawPrompt,
         promptName: promptName,
+        customTitle,
         responses: [],
         currentIndex: 0,
         createdAt: Date.now(),
@@ -231,9 +292,6 @@ export async function sendSimulation({
     };
 
     if (!isTemp) {
-        sims.push(sim);
-        saveSimulations();
-
         // 보낸 프롬프트 자동 저장 (체크박스로 옵트아웃 가능)
         if (!noSavePrompt) {
             const loadedPrompt = loadedPromptId ? savedPrompts.find(p => p.id === loadedPromptId) : null;
@@ -254,7 +312,7 @@ export async function sendSimulation({
 
     // 팝업을 쓰는 흐름에서만 상세 뷰로 전환한다. 슬래시 백그라운드 실행은 화면을 건드리지 않음.
     if (ui) {
-        if (isTemp) S.tempSim = sim;   // 저장 안 하기 모드: 메모리에만 있는 임시 sim
+        S.tempSim = sim; // Pending results must not enter chat_metadata before success.
         S.currentSimId = sim.id;
         S.currentView = 'detail';
         S.isEditingPrompt = false;
@@ -266,7 +324,7 @@ export async function sendSimulation({
         console.log(DEBUG_PREFIX, 'Generating simulation response...');
 
         // sim 의 injectPosition 사용 + 프리셋/토글 프리셋 임시 적용
-        const rawResponse = await withSimulationPreset(chosenPresetName, chosenTogglePresetName, () =>
+        const rawResponse = await withGenerationPreset(chosenPresetName, chosenTogglePresetName, () =>
             withSimIntercept(
                 { kind: ui ? '새 시뮬 전송' : '/sim 전송', position: sim.injectPosition },
                 () => runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, sim.injectPosition))
@@ -274,10 +332,15 @@ export async function sendSimulation({
         console.log(DEBUG_PREFIX, 'Raw response length:', rawResponse?.length);
 
         // 생성 중에 시뮬 배열이 갈렸을 수 있으니 저장형은 id 로 다시 잡는다
-        const targetSim = isTemp ? sim : (sims.find(s => s.id === sim.id) || sim);
+        const targetSim = sim;
         targetSim.responses.push(rawResponse);
         targetSim.currentIndex = 0;
-        if (!isTemp) saveSimulations();
+        if (!isTemp) {
+            getSimulations().push(targetSim);
+            if (S.tempSim?.id === sim.id) S.tempSim = null;
+            await saveSimulationsVerified();
+        }
+        delete S.createDrafts[originChatKey];
 
         if (notify) showSimNotification(targetSim);
         console.log(DEBUG_PREFIX, 'Simulation response received.');
@@ -292,7 +355,7 @@ export async function sendSimulation({
 
         if (ui) {
             // 방금 만든 시뮬이 응답 하나 없이 끝났으면 되돌리고 작성 화면으로 복귀
-            if (discardEmptyNewSim()) {
+            if (getCurrentChatKey() === originChatKey && S.currentSimId === sim.id && discardEmptyNewSim()) {
                 S.pendingCreateDraft = {
                     rawPrompt,
                     customTitle,
@@ -307,7 +370,7 @@ export async function sendSimulation({
                 S.currentView = 'create';
                 S.isEditingPrompt = false;
             }
-        } else if (!isTemp && !sim.responses.length) {
+        } else if (!isTemp && !sim.responses.length && getCurrentChatKey() === originChatKey) {
             // 백그라운드 실행은 S.currentSimId 를 안 쓰므로 직접 롤백
             const live = getSimulations();
             const idx = live.findIndex(s => s.id === sim.id);
@@ -357,14 +420,14 @@ export function discardEmptyNewSim() {
 }
 
 export async function handleRegenerateSimulation(sim) {
-    if (S.simGenerating) return;
+    if (S.simGenerating || S.isTranslating || isGenerating()) return;
     const resolvedPrompt = substituteParams(getEffectivePromptText(sim));
 
     enterSimGeneratingMode('sim-regenerate');
 
     const simId = sim.id;
     try {
-        const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
+        const rawResponse = await withGenerationPreset(sim.presetName, sim.togglePresetName, () =>
             withSimIntercept(
                 { kind: '답변 재생성', position: sim.injectPosition },
                 () => runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolvedPrompt, sim.injectPosition))
@@ -375,7 +438,7 @@ export async function handleRegenerateSimulation(sim) {
         if (!Array.isArray(targetSim.responses)) targetSim.responses = [];
         targetSim.responses.push(rawResponse);
         targetSim.currentIndex = targetSim.responses.length - 1;
-        if (!S.tempSim || S.tempSim.id !== simId) saveSimulations();
+        if (!S.tempSim || S.tempSim.id !== simId) await saveSimulationsVerified();
 
         showSimNotification(targetSim);
     } catch (err) {
@@ -394,7 +457,7 @@ export async function handleRegenerateSimulation(sim) {
 }
 
 export async function handleContinueSimulation(sim, responseIdx) {
-    if (S.simGenerating) return;
+    if (S.simGenerating || S.isTranslating || isGenerating()) return;
     const currentResponse = sim.responses[responseIdx];
     if (!currentResponse) {
         toastr.warning('이어쓸 응답이 없습니다.', '시뮬 매니저');
@@ -410,7 +473,7 @@ export async function handleContinueSimulation(sim, responseIdx) {
         // 이어쓰기: 지시문은 system, ghost/inject 본문은 "원래 요청 + 지금까지의 응답"
         const continueDirective = SIM_CONTINUE_INSTRUCTION;
         const continueBody = `<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${fullResponse}\n</response_so_far>`;
-        const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
+        const rawResponse = await withGenerationPreset(sim.presetName, sim.togglePresetName, () =>
             withSimIntercept(
                 { kind: '이어쓰기', position: sim.injectPosition },
                 () => runSimGeneration(continueDirective, continueBody, sim.injectPosition))
@@ -427,7 +490,7 @@ export async function handleContinueSimulation(sim, responseIdx) {
         // 번역 캐시 무효화
         if (target.translations) delete target.translations[key];
 
-        if (!S.tempSim || S.tempSim.id !== target.id) saveSimulations();
+        if (!S.tempSim || S.tempSim.id !== target.id) await saveSimulationsVerified();
 
         toastr.success('응답이 이어쓰기되었습니다.', '시뮬 매니저');
     } catch (err) {
@@ -457,25 +520,6 @@ export function clearSimOocInChat() {
     setExtensionPrompt(SIM_OOC_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.USER);
 }
 
-export function pushSimGhostMessage(content) {
-    const ctx = getContext();
-    const ghost = {
-        name: ctx?.name1 || 'User',
-        is_user: true,
-        is_system: false,
-        send_date: Date.now(),
-        mes: content,
-        extra: { sim_manager_ghost: true },
-    };
-    chat.push(ghost);
-    return ghost;
-}
-export function popSimGhostMessage(ghost) {
-    if (!ghost) return;
-    const idx = chat.lastIndexOf(ghost);
-    if (idx !== -1) chat.splice(idx, 1);
-}
-
 /**
  * 시뮬 생성 공통 래퍼.
  *  - directive: 시스템 지시문 (SIM_SYSTEM_INSTRUCTION / SIM_CONTINUE_INSTRUCTION)
@@ -484,14 +528,14 @@ export function popSimGhostMessage(ghost) {
  */
 export async function runSimGeneration(directive, ooc, position = SIM_POSITIONS.LAST_MESSAGE) {
     position = normalizeSimPosition(position);
-    let ghost = null;
     let quietPromptArg = '';
 
     try {
         switch (position) {
             case SIM_POSITIONS.LAST_MESSAGE:
                 setSimDirectiveSystem(directive);
-                ghost = pushSimGhostMessage(ooc);
+                // Inject at the end of history without putting a temporary message in chat.
+                setSimOocInChat(ooc, 0);
                 break;
             case SIM_POSITIONS.DEPTH_1:
                 setSimDirectiveSystem(directive);
@@ -508,7 +552,6 @@ export async function runSimGeneration(directive, ooc, position = SIM_POSITIONS.
         }
         return await generateQuietPrompt({ quietPrompt: quietPromptArg, quietToLoud: true });
     } finally {
-        popSimGhostMessage(ghost);
         clearSimDirectiveSystem();
         clearSimOocInChat();
     }
@@ -517,6 +560,8 @@ export async function runSimGeneration(directive, ooc, position = SIM_POSITIONS.
 
 
 export function showPartRevisionDialog(sim, responseIdx, partIdx) {
+    if (S.simGenerating || S.isTranslating || isGenerating()) return;
+    const sourceChatKey = getCurrentChatKey();
     const key = String(responseIdx);
     const conts = sim.continuations?.[key] || [];
     const partText = partIdx === 0 ? sim.responses[responseIdx] : conts[partIdx - 1];
@@ -540,6 +585,12 @@ export function showPartRevisionDialog(sim, responseIdx, partIdx) {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
     overlay.querySelector('#sim-part-revision-send').addEventListener('click', async () => {
+        if (S.simGenerating || S.isTranslating || isGenerating()) return;
+        if (sourceChatKey !== getCurrentChatKey()) {
+            overlay.remove();
+            toastr.warning('채팅방이 변경되었습니다. 원래 채팅방에서 다시 시도해주세요.');
+            return;
+        }
         const feedback = document.getElementById('sim-part-revision-feedback')?.value?.trim();
         if (!feedback) { toastr.warning('피드백을 입력해주세요.'); return; }
         overlay.remove();
@@ -577,9 +628,9 @@ ${feedback}
 
 You are an editor. Rewrite ONLY the original_message above based on the feedback. Do NOT roleplay. Do NOT continue the story. Begin the revised text now:`;
 
+        enterSimGeneratingMode('sim-regenerate');
         try {
-            S.simAborted = false;
-            const rawResponse = await withSimulationPreset(sim.presetName, sim.togglePresetName, () =>
+            const rawResponse = await withGenerationPreset(sim.presetName, sim.togglePresetName, () =>
                 withSimIntercept(
                     { kind: '통제광 (파트 수정)', position: SIM_POSITIONS.BOTTOM },
                     () => generateQuietPrompt({ quietPrompt: revisionPrompt, quietToLoud: true }))
@@ -587,18 +638,10 @@ You are an editor. Rewrite ONLY the original_message above based on the feedback
             // preset 전환 중 chat_metadata 가 바뀌었을 수 있어 live sim 재조회
             const liveSims = getSimulations();
             const target = (S.tempSim && S.tempSim.id === sim.id) ? S.tempSim : liveSims.find(s => s.id === sim.id) || sim;
-            // 해당 파트를 교체
-            if (partIdx === 0) {
-                target.responses[responseIdx] = rawResponse;
-            } else {
-                if (target.continuations?.[key]) target.continuations[key][partIdx - 1] = rawResponse;
-            }
-            // 번역 캐시 무효화
-            if (target.partTranslations?.[key]) delete target.partTranslations[key][String(partIdx)];
+            appendPartRevision(target, responseIdx, partIdx, rawResponse);
 
-            if (!S.tempSim || S.tempSim.id !== target.id) saveSimulations();
-            renderDetailView();
-            toastr.success('파트가 수정되었습니다.', '통제광');
+            if (!S.tempSim || S.tempSim.id !== target.id) await saveSimulationsVerified();
+            toastr.success('수정본을 새 답변으로 저장했습니다. 이전 답변에서 원문을 볼 수 있습니다.', '통제광');
         } catch (err) {
             if (S.simAborted) {
                 toastr.info('수정 요청을 취소했습니다.', '통제광');
@@ -606,6 +649,9 @@ You are an editor. Rewrite ONLY the original_message above based on the feedback
                 console.error(DEBUG_PREFIX, 'Part revision failed:', err);
                 toastr.error('수정 요청에 실패했습니다.', '통제광');
             }
+        } finally {
+            exitSimGeneratingMode();
+            if (S.currentView === 'detail' && S.currentSimId === sim.id) renderDetailView();
         }
     });
 }

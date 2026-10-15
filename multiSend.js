@@ -23,15 +23,16 @@ import {
     escapeHtml,
 } from './utils.js';
 import { ensureSettings } from './config.js';
-import { withSimulationPreset } from './preset.js';
 import { S } from './state.js';
 import {
     getSimulations,
-    syncToGlobal,
+    saveSimulationsVerified,
 } from './store.js';
 import {
     runSimGeneration,
     stopSimGeneration,
+    withGenerationPreset,
+    withSimIntercept,
 } from './generation.js';
 import {
     closePopup,
@@ -56,12 +57,12 @@ export function captureCurrentLocation() {
         const ctx = getContext();
         if (ctx.groupId) {
             const g = (ctx.groups || []).find(x => String(x.id) === String(ctx.groupId));
-            return { type: 'group', id: ctx.groupId, name: g?.name || '그룹', avatar: '' };
+            return { type: 'group', id: ctx.groupId, name: g?.name || '그룹', avatar: '', chatId: ctx.chatId };
         }
         const idx = ctx.characterId;
         if (idx !== undefined && idx !== null) {
             const c = (ctx.characters || [])[idx];
-            return { type: 'char', id: idx, name: c?.name || '캐릭터', avatar: c?.avatar || '' };
+            return { type: 'char', id: idx, name: c?.name || '캐릭터', avatar: c?.avatar || '', chatId: ctx.chatId };
         }
     } catch { /* ignore */ }
     return null;
@@ -74,12 +75,12 @@ export function getMultiSendTargets() {
         const ctx = getContext();
         (ctx.characters || []).forEach((char, index) => {
             if (char && char.name) {
-                targets.push({ type: 'char', id: index, name: char.name, avatar: char.avatar || '', isCurrent: false });
+                targets.push({ type: 'char', id: index, name: char.name, avatar: char.avatar || '', chatId: char.chat, isCurrent: false });
             }
         });
         (ctx.groups || []).forEach((g) => {
             if (g && g.name) {
-                targets.push({ type: 'group', id: g.id, name: g.name, avatar: '', isCurrent: false });
+                targets.push({ type: 'group', id: g.id, name: g.name, avatar: '', chatId: g.chat_id, isCurrent: false });
             }
         });
         const curKey = currentLocationKey();
@@ -96,6 +97,7 @@ export function getMultiSendTargets() {
 export function isOnTarget(target) {
     try {
         const ctx = getContext();
+        if (target.chatId && String(ctx.chatId) !== String(target.chatId)) return false;
         if (target.type === 'group') return String(ctx.groupId || '') === String(target.id);
         if (ctx.groupId) return false;
         const idx = ctx.characterId;
@@ -112,15 +114,17 @@ export function isOnTarget(target) {
 export function waitForChatChanged(timeout = 20000) {
     return new Promise((resolve) => {
         let done = false;
+        let timer;
         const finish = (ok) => {
             if (done) return;
             done = true;
+            clearTimeout(timer);
             eventSource.removeListener(event_types.CHAT_CHANGED, handler);
             resolve(ok);
         };
         const handler = () => finish(true);
         eventSource.on(event_types.CHAT_CHANGED, handler);
-        setTimeout(() => finish(false), timeout);
+        timer = setTimeout(() => finish(false), timeout);
     });
 }
 
@@ -131,7 +135,7 @@ export async function switchToTargetChat(target) {
     if (target.type === 'group') {
         const g = (ctx.groups || []).find(x => String(x.id) === String(target.id));
         if (!g) throw new Error(`그룹을 찾을 수 없습니다: ${target.name}`);
-        await ctx.openGroupChat(g.id, g.chat_id);
+        await ctx.openGroupChat(g.id, target.chatId || g.chat_id);
     } else {
         // 캐릭터 인덱스는 avatar 로 재확인 (목록 순서 변동 대비)
         let idx = target.id;
@@ -141,8 +145,12 @@ export async function switchToTargetChat(target) {
         }
         if (idx === undefined || idx === null || idx < 0) throw new Error(`캐릭터를 찾을 수 없습니다: ${target.name}`);
         await ctx.selectCharacterById(idx);
+        if (target.chatId && String(getContext().chatId) !== String(target.chatId)) {
+            await getContext().openCharacterChat(target.chatId);
+        }
     }
-    await loaded;
+    const didLoad = await loaded;
+    if (!didLoad || !isOnTarget(target)) throw new Error('채팅방을 정확히 불러오지 못했습니다.');
     await sleep(500); // 메타데이터/연결 settle
 }
 
@@ -206,6 +214,7 @@ export function setupMultiSendDrawer() {
 /** 두 위치(target 형태)가 같은 채팅방인지. */
 export function sameLocation(a, b) {
     if (!a || !b || a.type !== b.type) return false;
+    if (a.chatId && b.chatId && String(a.chatId) !== String(b.chatId)) return false;
     if (a.type === 'group') return String(a.id) === String(b.id);
     if (a.avatar && b.avatar) return a.avatar === b.avatar;
     return String(a.id) === String(b.id);
@@ -295,6 +304,8 @@ export async function handleMultiSendSimulation(targets, opts) {
     let success = 0;
     let fail = 0;
     let originSimId = null; // 현재 방이 대상에 포함됐으면, 그 방에서 만든 시뮬 id
+    let unsavedSimId = null;
+    let stopped = false;
 
     for (let i = 0; i < targets.length; i++) {
         if (S.multiSendShouldStop) break;
@@ -329,8 +340,10 @@ export async function handleMultiSendSimulation(targets, opts) {
                 swapPronouns: opts.chosenSwapPronouns,
             };
 
-            const rawResponse = await withSimulationPreset(opts.chosenPresetName, opts.chosenTogglePresetName, () =>
-                runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolved, sim.injectPosition)
+            S.simAborted = false;
+            const rawResponse = await withGenerationPreset(opts.chosenPresetName, opts.chosenTogglePresetName, () =>
+                withSimIntercept({ kind: `다중 전송: ${target.name}`, position: sim.injectPosition }, () =>
+                    runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolved, sim.injectPosition))
             );
 
             if (S.simAborted || (S.multiSendShouldStop && !rawResponse)) {
@@ -351,8 +364,12 @@ export async function handleMultiSendSimulation(targets, opts) {
             sims.push(sim);
 
             // 다음 방으로 넘어가기 전 즉시 저장 (debounce 미flush 방지)
-            try { await getContext().saveChat(); } catch (e) { console.error(DEBUG_PREFIX, 'saveChat failed:', e); }
-            syncToGlobal();
+            try {
+                await saveSimulationsVerified();
+            } catch (e) {
+                unsavedSimId = sim.id;
+                throw e;
+            }
 
             // 현재(원래) 방이 대상이면, 끝나고 디테일 뷰로 열어줄 시뮬 id 기억
             if (origin && sameLocation(target, origin)) {
@@ -362,9 +379,11 @@ export async function handleMultiSendSimulation(targets, opts) {
             success++;
             updateMultiSendPanel(i, targets.length, target.name, '완료 ✓');
         } catch (err) {
+            if (S.simAborted) { stopped = true; break; }
             console.error(DEBUG_PREFIX, 'multi-send failed for', target.name, err);
             fail++;
             updateMultiSendPanel(i, targets.length, target.name, '실패: ' + (err?.message || ''));
+            if (unsavedSimId) break; // Keep unsaved output in the current chat for retry.
             await sleep(600);
         }
 
@@ -373,7 +392,7 @@ export async function handleMultiSendSimulation(targets, opts) {
 
     // 원래 방으로 복귀
     try {
-        if (origin && !isOnTarget(origin)) {
+        if (!unsavedSimId && origin && !isOnTarget(origin)) {
             updateMultiSendPanel(targets.length, targets.length, origin.name, '원래 방으로 복귀 중...');
             await switchToTargetChat(origin);
         }
@@ -381,14 +400,16 @@ export async function handleMultiSendSimulation(targets, opts) {
         console.error(DEBUG_PREFIX, 'restore origin failed:', e);
     }
 
+    stopped ||= S.multiSendShouldStop;
     S.simGenerating = false;
     S.multiSendRunning = false;
     S.multiSendShouldStop = false;
     S.simAborted = false;
     hideMultiSendPanel();
+    if (unsavedSimId) openPopupToSim(unsavedSimId);
 
     // 현재 방이 대상에 포함됐고 복귀에 성공했으면, 그 방 시뮬을 디테일 뷰로 자동 오픈
-    if (originSimId && origin && isOnTarget(origin)) {
+    if (!unsavedSimId && originSimId && origin && isOnTarget(origin)) {
         try {
             openPopupToSim(originSimId);
         } catch (e) {
@@ -397,7 +418,11 @@ export async function handleMultiSendSimulation(targets, opts) {
     }
 
     if (typeof toastr !== 'undefined') {
-        if (success > 0 && fail === 0) {
+        if (unsavedSimId) {
+            toastr.error('저장을 확인하지 못해 다중 전송을 중단했습니다. 현재 결과에서 저장을 재시도해주세요.', '시뮬 매니저');
+        } else if (stopped) {
+            toastr.info(`다중 전송 중단. 완료 ${success} / 실패 ${fail} / 전체 ${targets.length}`, '시뮬 매니저');
+        } else if (success > 0 && fail === 0 && success === targets.length) {
             toastr.success(`다중 전송 완료! ${success}개 방 모두 성공`, '시뮬 매니저');
         } else if (success > 0) {
             toastr.warning(`다중 전송 완료. 성공 ${success} / 실패 ${fail}`, '시뮬 매니저');

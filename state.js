@@ -39,6 +39,9 @@ export const S = {
     // ── 생성 상태 (생성 중단) ─────────────────
     /** 시뮬 생성(최초/재생성/이어쓰기)이 진행 중인지 */
     simGenerating: false,
+    activeGenerationButton: null,
+    unsavedChatKey: null,
+    createDrafts: {},
     /** 사용자가 '중단'을 눌러 abort 했는지 */
     simAborted: false,
 

@@ -23,6 +23,7 @@ export function maybeResetContentScroll(viewKey, simId = null) {
 }
 
 export function goToList() {
+    if (S.simGenerating) return;
     S.currentView = 'list';
     S.currentSimId = null;
     S.tempSim = null;
@@ -49,7 +50,8 @@ export function openPopup() {
         fixMobileHeight();
         // globalList인 경우 renderGlobalListView가 별도 호출됨
         if (S.currentView !== 'globalList' && S.currentView !== 'globalSimList' && S.currentView !== 'globalDetail') {
-            renderListView();
+            if (S.currentView === 'detail') renderDetailView();
+            else renderListView();
         }
     }
 }

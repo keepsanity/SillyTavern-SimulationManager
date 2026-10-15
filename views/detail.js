@@ -27,6 +27,8 @@ import {
     getSimDisplayTitle,
     getSimulations,
     saveSimulations,
+    saveSimulationsVerified,
+    getCurrentChatKey,
 } from '../store.js';
 import {
     handleContinueSimulation,
@@ -42,6 +44,8 @@ import {
     maybeResetContentScroll,
 } from '../popup.js';
 import { translatePart } from '../translate.js';
+import { deleteResponse, deleteContinuation, appendPartRevision } from '../responseData.js';
+import { refreshSimGeneratingButtons } from '../generation.js';
 
 export function renderDetailView() {
     const container = document.getElementById('sim-content');
@@ -202,12 +206,31 @@ export function renderDetailView() {
         footer.innerHTML = `
         <div class="sim-detail-actions">
             <button class="sim-btn sim-btn-sm sim-btn-danger" id="sim-delete-sim"><i class="fa-solid fa-trash"></i> 시뮬 삭제</button>
+            ${S.unsavedChatKey === getCurrentChatKey() ? '<button class="sim-btn sim-btn-sm" id="sim-retry-save">저장 재시도</button>' : ''}
             ${responseCount > 0 ? `<button class="sim-btn sim-btn-sm" id="sim-continue"><i class="fa-solid fa-forward"></i> 이어쓰기</button>` : ''}
             <button class="sim-btn sim-btn-sm sim-btn-primary" id="sim-regenerate"><i class="fa-solid fa-rotate-right"></i> 답변 재생성</button>
         </div>`;
     }
 
     // 이벤트 바인딩
+    document.getElementById('sim-retry-save')?.addEventListener('click', async (event) => {
+        event.currentTarget.disabled = true;
+        try {
+            await saveSimulationsVerified();
+            toastr.success('시뮬 저장을 확인했습니다.');
+        } catch (e) {
+            toastr.error(e.message, '저장 실패');
+        } finally {
+            renderDetailView();
+        }
+    });
+    // Block mutations while a generation/translation owns response indices.
+    container.addEventListener('click', (event) => {
+        if (S.simGenerating || S.isTranslating) {
+            const action = event.target.closest('button, [data-action], #sim-edit-settings-btn');
+            if (action) { event.preventDefault(); event.stopImmediatePropagation(); }
+        }
+    }, { capture: true, once: false, signal: replaceDetailGuard() });
     document.getElementById('sim-back-to-list')?.addEventListener('click', goToList);
 
     // 설정 박스: 모든 변경 즉시 반영
@@ -424,13 +447,7 @@ export function renderDetailView() {
                     if (!textarea) return;
                     const newText = textarea.value.trim();
                     if (!newText) { alert('내용을 입력해주세요.'); return; }
-                    if (partIdx === 0) {
-                        sim.responses[currentIdx] = newText;
-                    } else {
-                        if (sim.continuations?.[key]) sim.continuations[key][partIdx - 1] = newText;
-                    }
-                    // 해당 파트 번역 캐시 무효화
-                    if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
+                    appendPartRevision(sim, currentIdx, partIdx, newText);
                     S.editingPartIdx = null;
                     saveSimulations();
                     renderDetailView();
@@ -454,9 +471,7 @@ export function renderDetailView() {
                 case 'part-delete': {
                     if (partIdx === 0) return; // base는 삭제 불가
                     if (!confirm('이 이어쓰기 파트를 삭제하시겠습니까?')) return;
-                    const contIdx = partIdx - 1;
-                    if (sim.continuations?.[key]) sim.continuations[key].splice(contIdx, 1);
-                    if (sim.partTranslations?.[key]) delete sim.partTranslations[key][String(partIdx)];
+                    deleteContinuation(sim, currentIdx, partIdx);
                     saveSimulations();
                     renderDetailView();
                     toastr.success('파트가 삭제되었습니다.', '시뮬 매니저');
@@ -498,6 +513,7 @@ export function renderDetailView() {
     });
 
     document.getElementById('sim-delete-sim')?.addEventListener('click', () => {
+        if (S.simGenerating || S.isTranslating) return;
         if (confirm('이 시뮬레이션을 삭제하시겠습니까?')) {
             const idx = sims.findIndex(s => s.id === sim.id);
             if (idx !== -1) {
@@ -510,19 +526,21 @@ export function renderDetailView() {
 
     document.getElementById('sim-delete-response')?.addEventListener('click', () => {
         if (confirm('현재 보고 있는 답변을 삭제하시겠습니까?')) {
-            const delKey = String(sim.currentIndex);
-            sim.responses.splice(sim.currentIndex, 1);
-            if (sim.translations) delete sim.translations[delKey];
-            if (sim.continuations) delete sim.continuations[delKey];
-            if (sim.partTranslations) delete sim.partTranslations[delKey];
-            if (sim.currentIndex >= sim.responses.length) {
-                sim.currentIndex = Math.max(0, sim.responses.length - 1);
-            }
+            deleteResponse(sim, sim.currentIndex);
             saveSimulations();
             renderDetailView();
         }
     });
 
+    refreshSimGeneratingButtons();
+
+}
+
+let detailGuard;
+function replaceDetailGuard() {
+    detailGuard?.abort();
+    detailGuard = new AbortController();
+    return detailGuard.signal;
 }
 
 // ============================================
