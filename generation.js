@@ -1,14 +1,13 @@
+import { getSavedPrompts, updateSavedPrompts } from './prompt-storage.js';
 /**
  * 시뮬 생성 파이프라인: 전송/재생성/이어쓰기/통제광, 프롬프트 주입과 중단 제어.
  */
 import {
-    extension_settings,
     getContext,
 } from '../../../extensions.js';
 import {
     generateQuietPrompt,
     substituteParams,
-    saveSettingsDebounced,
     setExtensionPrompt,
     extension_prompt_types,
     extension_prompt_roles,
@@ -24,7 +23,6 @@ import {
 } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
 import {
-    EXTENSION_NAME,
     DEBUG_PREFIX,
     SIM_CONTINUE_INSTRUCTION,
     SIM_SYSTEM_INSTRUCTION,
@@ -199,7 +197,7 @@ export async function handleSendSimulation() {
     const onlyCurrent = multiTargets.length === 1 && sameLocation(multiTargets[0], curLoc);
     if (multiTargets.length > 0 && !onlyCurrent) {
         ensureSettings();
-        const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+        const savedPrompts = getSavedPrompts();
         const matchedPrompt = savedPrompts.find(p => p.content === rawPrompt);
         await handleMultiSendSimulation(multiTargets, {
             rawPrompt,
@@ -281,7 +279,7 @@ export async function sendSimulation({
 
     // 프롬프트 이름 결정
     ensureSettings();
-    const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const savedPrompts = getSavedPrompts();
     const matchedPrompt = savedPrompts.find(p => p.content === rawPrompt);
     const promptName = customTitle || (matchedPrompt ? matchedPrompt.name : '');
 
@@ -303,25 +301,6 @@ export async function sendSimulation({
         ...(chosenUserAlias ? { userAlias: chosenUserAlias } : {}),
     };
 
-    if (!isTemp) {
-        // 보낸 프롬프트 자동 저장 (체크박스로 옵트아웃 가능)
-        if (!noSavePrompt) {
-            const loadedPrompt = loadedPromptId ? savedPrompts.find(p => p.id === loadedPromptId) : null;
-            const titleChanged = customTitle && loadedPrompt && customTitle !== loadedPrompt.name;
-            const contentChanged = !savedPrompts.some(p => p.content === rawPrompt);
-
-            if (titleChanged || contentChanged) {
-                savedPrompts.push({
-                    id: `prompt_${uuidv4()}`,
-                    name: customTitle || (rawPrompt.length > 20 ? rawPrompt.substring(0, 20) + '...' : rawPrompt),
-                    content: rawPrompt,
-                });
-                saveSettingsDebounced();
-                renderSettingsSavedPrompts();
-            }
-        }
-    }
-
     // 팝업을 쓰는 흐름에서만 상세 뷰로 전환한다. 슬래시 백그라운드 실행은 화면을 건드리지 않음.
     if (ui) {
         S.tempSim = sim; // Pending results must not enter chat_metadata before success.
@@ -333,6 +312,26 @@ export async function sendSimulation({
 
     enterSimGeneratingMode('sim-regenerate');
     try {
+        if (!isTemp) {
+            // 보낸 프롬프트 자동 저장 (체크박스로 옵트아웃 가능)
+            if (!noSavePrompt) {
+                const loadedPrompt = loadedPromptId ? savedPrompts.find(p => p.id === loadedPromptId) : null;
+                const titleChanged = customTitle && loadedPrompt && customTitle !== loadedPrompt.name;
+                const contentChanged = !savedPrompts.some(p => p.content === rawPrompt);
+
+                if (titleChanged || contentChanged) {
+                    const saved = await updateSavedPrompts(prompts => {
+                        prompts.push({
+                            id: `prompt_${uuidv4()}`,
+                            name: customTitle || (rawPrompt.length > 20 ? rawPrompt.substring(0, 20) + '...' : rawPrompt),
+                            content: rawPrompt,
+                        });
+                    });
+                    if (saved) renderSettingsSavedPrompts();
+                }
+            }
+        }
+
         console.log(DEBUG_PREFIX, 'Generating simulation response...');
 
         // sim 의 injectPosition 사용 + 프리셋/토글 프리셋 임시 적용

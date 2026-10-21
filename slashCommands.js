@@ -1,3 +1,4 @@
+import { getSavedPrompts } from './prompt-storage.js';
 /**
  * 슬래시 명령 `/sim` — Quick Reply 버튼 하나로 시뮬을 생성하기 위한 진입점.
  *
@@ -14,10 +15,8 @@ import {
 import { SlashCommandEnumValue, enumTypes } from '../../../slash-commands/SlashCommandEnumValue.js';
 import { commonEnumProviders, enumIcons } from '../../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { slashCommandReturnHelper } from '../../../slash-commands/SlashCommandReturnHelper.js';
-import { extension_settings } from '../../../extensions.js';
 import { isTrueBoolean } from '../../../utils.js';
 import {
-    EXTENSION_NAME,
     DEBUG_PREFIX,
     SIM_POSITION_LABELS,
 } from './constants.js';
@@ -31,7 +30,7 @@ import { openPopupToSim } from './popup.js';
 /** 저장된 프롬프트 자동완성. 입력 중에 목록이 떠서 골라 넣을 수 있다. */
 function savedPromptEnumProvider() {
     ensureSettings();
-    const prompts = extension_settings[EXTENSION_NAME].savedPrompts || [];
+    const prompts = getSavedPrompts() || [];
     // 최신순이 위로 오게 (배열 순서 = 저장순)
     return prompts.slice().reverse().map(p => new SlashCommandEnumValue(
         p.name,
@@ -55,7 +54,7 @@ function positionEnumProvider() {
 /** 이름이 정확히(대소문자 무시) 일치하는 저장 프롬프트. */
 function findSavedPromptExact(name) {
     ensureSettings();
-    const prompts = extension_settings[EXTENSION_NAME].savedPrompts || [];
+    const prompts = getSavedPrompts() || [];
     const q = String(name).trim();
     const lower = q.toLowerCase();
     return prompts.find(p => p.name === q)
@@ -71,7 +70,7 @@ function findSavedPrompt(name) {
     if (exact) return exact;
 
     ensureSettings();
-    const prompts = extension_settings[EXTENSION_NAME].savedPrompts || [];
+    const prompts = getSavedPrompts() || [];
     const q = String(name).trim();
     const lower = q.toLowerCase();
     return prompts.find(p => p.id === q)

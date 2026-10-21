@@ -1,3 +1,4 @@
+import { getSavedPrompts } from '../prompt-storage.js';
 /**
  * 목록 뷰 + 새 시뮬 작성 뷰.
  */
@@ -27,6 +28,11 @@ import {
     getSimulations,
     saveSimulations,
     getCurrentChatKey,
+    getCurrentChatDisplayName,
+    exportCurrentChatBackup,
+    readBackupFile,
+    importSimsIntoCurrentChat,
+    deleteAllSimsInCurrentChat,
 } from '../store.js';
 import { handleSendSimulation } from '../generation.js';
 import { setupMultiSendDrawer } from '../multiSend.js';
@@ -43,13 +49,25 @@ export function renderListView() {
     maybeResetContentScroll('list');
 
     let html = `<div class="sim-list-view">`;
-    html += `<button class="sim-new-btn" id="sim-go-create"><i class="fa-solid fa-plus"></i> 새 시뮬레이션</button>`;
+    html += `
+    <div class="sim-list-toolbar">
+        <button class="sim-new-btn" id="sim-go-create"><i class="fa-solid fa-plus"></i> 새 시뮬레이션</button>
+        <div class="sim-more-wrap">
+            <button class="sim-more-btn" id="sim-list-more" aria-label="이 방 시뮬 관리"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+            <div class="sim-more-menu hidden" id="sim-list-more-menu">
+                <button class="sim-more-item" data-action="export"><i class="fa-solid fa-download"></i> 이 방 백업</button>
+                <button class="sim-more-item" data-action="import"><i class="fa-solid fa-file-import"></i> 가져오기</button>
+                <button class="sim-more-item sim-more-item-danger" data-action="delete-all"><i class="fa-solid fa-trash"></i> 전체 삭제</button>
+            </div>
+            <input type="file" id="sim-list-import-file" accept=".json,.zip,application/json,application/zip" style="display:none" />
+        </div>
+    </div>`;
 
     if (sims.length === 0) {
         html += `<div class="sim-empty"><i class="fa-solid fa-flask" style="font-size:32px; margin-bottom:12px; opacity:0.3;"></i><br>아직 시뮬레이션이 없습니다.<br>위 버튼을 눌러 새로 만들어보세요.</div>`;
     } else {
         ensureSettings();
-        const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+        const savedPrompts = getSavedPrompts();
         let needsSave = false;
         const sorted = [...sims].reverse();
         for (const sim of sorted) {
@@ -77,6 +95,8 @@ export function renderListView() {
     const footer = document.getElementById('sim-footer');
     if (footer) { footer.innerHTML = ''; footer.classList.add('hidden'); }
 
+    setupListMoreMenu(container);
+
     document.getElementById('sim-go-create')?.addEventListener('click', () => {
         if (S.simGenerating) return;
         S.pendingCreateDraft = S.createDrafts[getCurrentChatKey()] || null;
@@ -95,6 +115,115 @@ export function renderListView() {
     });
 }
 
+// ============================================
+// 점세개 메뉴: 이 방 백업 · 가져오기 · 전체 삭제
+// ============================================
+function setupListMoreMenu(container) {
+    const btn = document.getElementById('sim-list-more');
+    const menu = document.getElementById('sim-list-more-menu');
+    const fileInput = document.getElementById('sim-list-import-file');
+    if (!btn || !menu || !fileInput) return;
+
+    const close = () => menu.classList.add('hidden');
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        menu.classList.toggle('hidden');
+    });
+    container.addEventListener('click', (e) => {
+        if (!menu.contains(e.target)) close();
+    });
+
+    menu.querySelectorAll('.sim-more-item').forEach(item => {
+        item.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            close();
+            if (S.simGenerating) {
+                toastr.warning('생성이 끝난 뒤에 할 수 있습니다.', '시뮬 매니저');
+                return;
+            }
+            const action = item.dataset.action;
+            if (action === 'export') handleExportRoom();
+            else if (action === 'import') fileInput.click();
+            else if (action === 'delete-all') await handleDeleteAllRoom();
+        });
+    });
+
+    fileInput.addEventListener('change', async () => {
+        const file = fileInput.files?.[0];
+        fileInput.value = '';
+        if (file) await handleImportRoom(file);
+    });
+}
+
+function handleExportRoom() {
+    const count = exportCurrentChatBackup();
+    if (count > 0) toastr.success(`이 방 시뮬 ${count}개를 백업 파일로 내보냈습니다.`, '시뮬 매니저');
+    else toastr.info('백업할 시뮬이 없습니다.', '시뮬 매니저');
+}
+
+async function handleImportRoom(file) {
+    const chatKey = getCurrentChatKey();
+    try {
+        const rooms = await readBackupFile(file);
+        if (!rooms.length) throw new Error('가져올 시뮬이 없습니다.');
+        const room = rooms.length === 1 ? rooms[0] : await pickBackupRoom(rooms, chatKey);
+        if (!room) return;
+        if (getCurrentChatKey() !== chatKey) throw new Error('채팅방이 바뀌어 가져오기를 중단했습니다.');
+        const { added, skipped } = await importSimsIntoCurrentChat(room.simulations);
+        if (added === 0) toastr.info(`이미 있는 시뮬 ${skipped}개라 새로 추가된 게 없습니다.`, '시뮬 매니저');
+        else toastr.success(`${added}개 가져옴${skipped ? ` · 중복 ${skipped}개 건너뜀` : ''}`, '시뮬 매니저');
+        if (S.currentView === 'list') renderListView();
+    } catch (e) {
+        console.error('[SimManager] Import failed:', e);
+        toastr.error(e.message || '파일을 읽지 못했습니다.', '가져오기 실패');
+    }
+}
+
+/** 백업에 방이 여럿이면 어느 방을 넣을지 고른다. 현재 방과 키가 같은 게 있으면 그걸 기본 선택. */
+function pickBackupRoom(rooms, currentKey) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'sim-dialog-overlay';
+        const options = rooms.map((r, i) =>
+            `<option value="${i}"${r.key === currentKey ? ' selected' : ''}>${escapeHtml(r.chatName)} (${r.simulations.length}개)</option>`).join('');
+        overlay.innerHTML = `
+        <div class="sim-dialog-box">
+            <div class="sim-dialog-title"><i class="fa-solid fa-file-import"></i> 가져올 방 선택</div>
+            <div class="sim-dialog-desc">백업에 방이 ${rooms.length}개 있습니다. 고른 방의 시뮬을 <b>${escapeHtml(getCurrentChatDisplayName())}</b>에 넣습니다.</div>
+            <select class="sim-saved-prompts-select" id="sim-import-room-select">${options}</select>
+            <div class="sim-dialog-buttons">
+                <button class="sim-btn" id="sim-import-cancel">취소</button>
+                <button class="sim-btn sim-btn-primary" id="sim-import-ok">가져오기</button>
+            </div>
+        </div>`;
+        document.body.appendChild(overlay);
+        const done = (value) => { overlay.remove(); resolve(value); };
+        overlay.querySelector('#sim-import-cancel').addEventListener('click', () => done(null));
+        overlay.querySelector('#sim-import-ok').addEventListener('click', () => {
+            const idx = Number(overlay.querySelector('#sim-import-room-select').value);
+            done(rooms[idx] || null);
+        });
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+    });
+}
+
+async function handleDeleteAllRoom() {
+    const count = getSimulations().length;
+    if (count === 0) {
+        toastr.info('삭제할 시뮬이 없습니다.', '시뮬 매니저');
+        return;
+    }
+    if (!confirm(`이 방의 시뮬 ${count}개를 모두 삭제하시겠습니까?\n되돌릴 수 없습니다. 필요하면 먼저 백업하세요.`)) return;
+    try {
+        const removed = await deleteAllSimsInCurrentChat();
+        toastr.success(`시뮬 ${removed}개를 삭제했습니다.`, '시뮬 매니저');
+    } catch (e) {
+        console.error('[SimManager] Delete all failed:', e);
+        toastr.error(e.message || '삭제 저장에 실패했습니다.', '삭제 실패');
+    }
+    if (S.currentView === 'list') renderListView();
+}
+
 /**
  * '저장된 프롬프트 불러오기' 드롭다운 옵션 HTML 생성.
  * 검색어로 필터 + 설정된 정렬(최신/오래된/이름) 적용.
@@ -103,7 +232,7 @@ export function buildLoadPromptOptions(query = '') {
     ensureSettings();
     const s = extension_settings[EXTENSION_NAME];
     const q = (query || '').toLowerCase().trim();
-    let list = s.savedPrompts.filter(p => !q || p.name.toLowerCase().includes(q) || p.content.toLowerCase().includes(q));
+    let list = getSavedPrompts().filter(p => !q || p.name.toLowerCase().includes(q) || p.content.toLowerCase().includes(q));
 
     const order = s.promptSortOrder || 'newest';
     if (order === 'newest') {
@@ -127,7 +256,7 @@ export function renderCreateView() {
     const draftChatKey = getCurrentChatKey();
 
     ensureSettings();
-    const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const savedPrompts = getSavedPrompts();
 
     const selectOptions = buildLoadPromptOptions();
 

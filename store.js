@@ -432,28 +432,24 @@ export async function scanAllChatsForSimulations() {
 // ============================================
 
 /**
- * 전체 시뮬을 JSON 파일로 내보내기 (다운로드).
+ * 전체 시뮬을 방마다 JSON 하나씩 담은 zip 으로 내보내기 (다운로드).
  * 채팅 파일은 건드리지 않음 — 스캔(읽기) 후 직렬화만.
+ * 각 JSON 은 방 백업과 같은 형식이라 하나씩 따로 가져올 수 있다.
  * @returns {Promise<number>} 내보낸 시뮬 개수 (실패 시 -1)
  */
 export async function exportSimBackup() {
     try {
         const scan = await scanAllChatsForSimulations();
         if (!scan.complete || scan.total < 0) throw new Error('일부 채팅을 읽지 못해 백업을 중단했습니다.');
-        const payload = await buildBackupPayload();
-        clearSimCache();                    // 전 채팅 본문을 들고 있을 이유가 없다
+        const { files, simCount } = await buildBackupPayload();
+        if (simCount === 0) throw new Error('백업할 시뮬이 없습니다.');
 
-        const json = JSON.stringify(payload, null, 2);
-        const blob = new Blob([json], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `sim-manager-backup_${fileStamp()}.json`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        return payload.simCount;
+        const JSZip = await loadJSZip();
+        const zip = new JSZip();
+        for (const [name, json] of files) zip.file(name, json);
+        const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+        downloadBlob(`sim-manager-backup_${fileStamp()}.zip`, blob);
+        return simCount;
     } catch (e) {
         console.error(DEBUG_PREFIX, 'Export failed:', e);
         toastr.error(e.message, '백업 실패');
@@ -463,28 +459,173 @@ export async function exportSimBackup() {
     }
 }
 
-/** 백업 파일 형식은 1.5.0 이전과 동일하게 유지한다 (globalSimulations 모양). */
+/**
+ * zip 에 넣을 방별 파일 목록. 읽지 못한 방이 있으면 조용히 빼지 않고 throw 한다.
+ * @returns {Promise<{files: Map<string, string>, simCount: number}>}
+ */
 async function buildBackupPayload() {
-    const index = getGlobalIndex();
-    const globalSimulations = {};
+    const files = new Map();
+    const usedNames = new Set();
+    const exportedAt = new Date().toISOString();
     let simCount = 0;
 
-    for (const [key, entry] of Object.entries(index)) {
+    for (const [key, entry] of Object.entries(getGlobalIndex())) {
         const sims = key === getCurrentChatKey() ? getSimulations() : await fetchSimsFromChatFile(entry);
         if (!sims.length) continue;
-        // 곧바로 직렬화하므로 복사하지 않는다 (전 채팅 분량이라 사본 하나가 그대로 최대치가 됨)
-        globalSimulations[key] = { chatName: entry.chatName, simulations: sims };
+        const chatName = entry.chatName || key;
+        files.set(uniqueName(usedNames, safeFileName(chatName)) + '.json',
+            JSON.stringify(buildRoomPayload(key, chatName, sims, exportedAt), null, 2));
         simCount += sims.length;
+        memCache.delete(key);           // 방 하나 직렬화했으면 본문은 바로 놓는다
     }
+    return { files, simCount };
+}
 
+/** 방 하나짜리 백업 본문. 1.5.0 이전 전체 백업과 같은 모양(globalSimulations)이라 서로 호환된다. */
+function buildRoomPayload(key, chatName, sims, exportedAt = new Date().toISOString()) {
     return {
         type: 'sim-manager-backup',
         version: 1,
-        exportedAt: new Date().toISOString(),
-        chatCount: Object.keys(globalSimulations).length,
-        simCount,
-        globalSimulations,
+        exportedAt,
+        chatCount: 1,
+        simCount: sims.length,
+        globalSimulations: { [key]: { chatName, simulations: sims } },
     };
+}
+
+async function loadJSZip() {
+    if (!('JSZip' in window)) await import('../../../../lib/jszip.min.js');
+    if (!window.JSZip) throw new Error('zip 라이브러리를 불러오지 못했습니다.');
+    return window.JSZip;
+}
+
+function uniqueName(used, base) {
+    let name = base;
+    for (let i = 2; used.has(name); i++) name = `${base}_${i}`;
+    used.add(name);
+    return name;
+}
+
+// ============================================
+// 방 단위 백업 · 가져오기 · 전체 삭제 (현재 채팅만)
+// ============================================
+
+/** 현재 방 시뮬만 JSON 으로 내려받는다. */
+export function exportCurrentChatBackup() {
+    const key = getCurrentChatKey();
+    const sims = getSimulations();
+    if (!key || sims.length === 0) return 0;
+    const chatName = getCurrentChatDisplayName();
+    const payload = buildRoomPayload(key, chatName, sims);
+    downloadBlob(`sim-manager-backup_${safeFileName(chatName)}_${fileStamp()}.json`,
+        new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+    return sims.length;
+}
+
+/**
+ * 백업 파일(.json 또는 .zip)에서 방 목록을 꺼낸다.
+ * @param {File|Blob} file
+ * @returns {Promise<Array<{key: string, chatName: string, simulations: Array}>>}
+ */
+export async function readBackupFile(file) {
+    const name = String(file?.name || '').toLowerCase();
+    const isZip = name.endsWith('.zip') || file?.type === 'application/zip' || file?.type === 'application/x-zip-compressed';
+    if (!isZip) return parseBackupRooms(JSON.parse(await file.text()));
+
+    const JSZip = await loadJSZip();
+    const zip = await JSZip.loadAsync(file);
+    const rooms = [];
+    for (const entry of Object.values(zip.files)) {
+        if (entry.dir || !entry.name.toLowerCase().endsWith('.json')) continue;
+        try {
+            rooms.push(...parseBackupRooms(JSON.parse(await entry.async('string'))));
+        } catch (e) {
+            console.warn(DEBUG_PREFIX, 'Skipped zip entry:', entry.name, e);
+        }
+    }
+    if (!rooms.length) throw new Error('zip 안에 시뮬 백업 파일이 없습니다.');
+    return rooms;
+}
+
+/**
+ * 백업 JSON 에서 방 목록을 꺼낸다. 전체 백업·방 백업·시뮬 배열 모두 받는다.
+ * @returns {Array<{key: string, chatName: string, simulations: Array}>}
+ */
+export function parseBackupRooms(data) {
+    if (Array.isArray(data)) {
+        return [{ key: '', chatName: '시뮬 목록', simulations: data.filter(isValidSim) }];
+    }
+    const rooms = data?.globalSimulations;
+    if (!rooms || typeof rooms !== 'object') throw new Error('시뮬 매니저 백업 파일이 아닙니다.');
+    return Object.entries(rooms)
+        .map(([key, room]) => ({
+            key,
+            chatName: room?.chatName || key,
+            simulations: (Array.isArray(room?.simulations) ? room.simulations : []).filter(isValidSim),
+        }))
+        .filter(r => r.simulations.length > 0);
+}
+
+function isValidSim(sim) {
+    return !!sim && typeof sim === 'object' && typeof sim.id === 'string'
+        && typeof sim.promptText === 'string' && Array.isArray(sim.responses);
+}
+
+/**
+ * 시뮬 목록을 현재 방에 합친다. id 가 같은 건 건너뛴다.
+ * @returns {Promise<{added: number, skipped: number}>}
+ */
+export async function importSimsIntoCurrentChat(incoming) {
+    const sims = getSimulations();
+    const before = sims.slice();
+    const have = new Set(sims.map(s => s.id));
+    let added = 0, skipped = 0;
+    for (const sim of incoming) {
+        if (have.has(sim.id)) { skipped++; continue; }
+        sims.push(structuredClone(sim));
+        have.add(sim.id);
+        added++;
+    }
+    if (added === 0) return { added, skipped };
+    sims.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    try {
+        await saveSimulationsVerified();
+    } catch (e) {
+        sims.splice(0, sims.length, ...before);
+        throw e;
+    }
+    return { added, skipped };
+}
+
+/** 현재 방 시뮬을 모두 지운다. 저장 확인이 안 되면 되돌린다. */
+export async function deleteAllSimsInCurrentChat() {
+    const sims = getSimulations();
+    const before = sims.slice();
+    const count = before.length;
+    if (count === 0) return 0;
+    sims.length = 0;
+    try {
+        await saveSimulationsVerified();
+    } catch (e) {
+        sims.push(...before);
+        throw e;
+    }
+    return count;
+}
+
+function downloadBlob(name, blob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+function safeFileName(name) {
+    return String(name || 'chat').replace(/[^\p{L}\p{N}._-]+/gu, '_').slice(0, 40) || 'chat';
 }
 
 /**

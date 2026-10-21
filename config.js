@@ -15,7 +15,6 @@ import {
 import { normalizeSimPosition } from './utils.js';
 
 const defaultSettings = {
-    savedPrompts: [],
     notificationsEnabled: true,
     // 모아보기 인덱스: { chatKey: { chatName, count, lastAt, avatar?, chName?, fileName?, groupId?, groupChatId? } }
     // 다시 읽어올 때 쓰는 건 캐릭터 채팅이면 avatar+chName+fileName, 그룹이면 groupChatId.
@@ -63,7 +62,6 @@ export function ensureSettings() {
         extension_settings[EXTENSION_NAME] = structuredClone(defaultSettings);
     }
     const s = extension_settings[EXTENSION_NAME];
-    if (!Array.isArray(s.savedPrompts)) s.savedPrompts = [];
     if (typeof s.notificationsEnabled !== 'boolean') s.notificationsEnabled = true;
     if (!s.globalIndex || typeof s.globalIndex !== 'object') s.globalIndex = {};
     if (typeof s.globalIndexStale !== 'boolean') s.globalIndexStale = false;

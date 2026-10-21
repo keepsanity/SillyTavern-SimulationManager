@@ -1,10 +1,8 @@
+import { getSavedPrompts, updateSavedPrompts, promptStorageAction } from '../prompt-storage.js';
 /**
  * 저장된 프롬프트 관리 뷰 (목록/편집).
  */
-import { extension_settings } from '../../../../extensions.js';
-import { saveSettingsDebounced } from '../../../../../script.js';
 import { uuidv4 } from '../../../../utils.js';
-import { EXTENSION_NAME } from '../constants.js';
 import { escapeHtml } from '../utils.js';
 import { ensureSettings } from '../config.js';
 import {
@@ -18,7 +16,7 @@ export function renderPromptManagerView() {
     maybeResetContentScroll('promptManager');
 
     ensureSettings();
-    const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const prompts = getSavedPrompts();
 
     let html = `<div class="sim-list-view">
         <input type="text" class="sim-prompt-search" id="sim-pm-search" placeholder="프롬프트 검색..." style="margin-bottom:8px;" />`;
@@ -72,7 +70,7 @@ export function renderPromptEditView(promptId) {
     maybeResetContentScroll('promptEdit');
 
     ensureSettings();
-    const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const prompts = getSavedPrompts();
     const prompt = promptId ? prompts.find(p => p.id === promptId) : null;
 
     container.innerHTML = `
@@ -107,32 +105,32 @@ export function renderPromptEditView(promptId) {
 
     document.getElementById('sim-pe-back')?.addEventListener('click', renderPromptManagerView);
 
-    document.getElementById('sim-pe-save')?.addEventListener('click', () => {
+    document.getElementById('sim-pe-save')?.addEventListener('click', promptStorageAction(async () => {
         const name = document.getElementById('sim-pe-name')?.value.trim();
         const content = document.getElementById('sim-pe-content')?.value.trim();
         if (!name || !content) { alert('이름과 내용을 모두 입력해주세요.'); return; }
 
         ensureSettings();
-        const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
-        if (promptId) {
-            const found = prompts.find(p => p.id === promptId);
-            if (found) { found.name = name; found.content = content; }
-        } else {
-            prompts.push({ id: `prompt_${uuidv4()}`, name, content });
-        }
-        saveSettingsDebounced();
+        if (!await updateSavedPrompts(prompts => {
+            if (promptId) {
+                const found = prompts.find(p => p.id === promptId);
+                if (found) { found.name = name; found.content = content; }
+            } else {
+                prompts.push({ id: `prompt_${uuidv4()}`, name, content });
+            }
+        })) return;
         toastr.success('저장되었습니다.', '시뮬 매니저');
         renderPromptManagerView();
-    });
+    }));
 
-    document.getElementById('sim-pe-delete')?.addEventListener('click', () => {
+    document.getElementById('sim-pe-delete')?.addEventListener('click', promptStorageAction(async () => {
         if (!promptId || !confirm('이 프롬프트를 삭제하시겠습니까?')) return;
         ensureSettings();
-        const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
-        const idx = prompts.findIndex(p => p.id === promptId);
-        if (idx !== -1) prompts.splice(idx, 1);
-        saveSettingsDebounced();
+        if (!await updateSavedPrompts(prompts => {
+            const idx = prompts.findIndex(p => p.id === promptId);
+            if (idx !== -1) prompts.splice(idx, 1);
+        })) return;
         toastr.info('삭제되었습니다.', '시뮬 매니저');
         renderPromptManagerView();
-    });
+    }));
 }

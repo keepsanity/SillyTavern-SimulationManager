@@ -107,11 +107,28 @@ function resolveStorageKey(obj, presetName) {
     return Object.keys(obj).find(k => collapseWs(k) === target) ?? null;
 }
 
+let readCustomToggleStorage = null;
+export async function initCustomPresetStorage() {
+    if (!extension_settings[CUSTOM_PRESET_EXT]) return;
+    try {
+        const module = await import('../SillyTavern-CustomPreset/toggle-storage.js');
+        readCustomToggleStorage = module.getTogglePresetsStorage;
+    } catch (error) {
+        // Older CustomPreset installations still expose the settings-based store.
+        console.debug('[SimulationManager] CustomPreset file storage unavailable:', error);
+    }
+}
+
 function getTogglePresetMap(presetName) {
     const s = extension_settings[CUSTOM_PRESET_EXT];
-    if (!s || !s.togglePresets || !presetName) return null;
-    const key = resolveStorageKey(s.togglePresets, presetName);
-    const map = key ? s.togglePresets[key] : null;
+    if (!s || !presetName) return null;
+    let storage = s.togglePresets;
+    try {
+        if (readCustomToggleStorage) storage = readCustomToggleStorage();
+    } catch { /* CustomPreset has not finished initialization; keep the legacy fallback. */ }
+    if (!storage) return null;
+    const key = resolveStorageKey(storage, presetName);
+    const map = key ? storage[key] : null;
     return (map && typeof map === 'object') ? map : null;
 }
 

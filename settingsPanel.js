@@ -1,8 +1,8 @@
+import { getSavedPrompts, updateSavedPrompts, promptStorageAction } from './prompt-storage.js';
 /**
  * 확장 설정 패널: 저장된 프롬프트 목록 렌더 + 설정 이벤트 바인딩.
  */
 import { extension_settings } from '../../../extensions.js';
-import { saveSettingsDebounced } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
 import { EXTENSION_NAME } from './constants.js';
 import { escapeHtml } from './utils.js';
@@ -20,7 +20,7 @@ export function renderSettingsSavedPrompts() {
     const deleteBtn = document.getElementById('sim-delete-prompt-btn');
     if (!select) return;
 
-    const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const prompts = getSavedPrompts();
 
     let options = '<option value="">-- 새로 생성하기 --</option>';
     for (const p of prompts) {
@@ -52,7 +52,7 @@ export function bindSettingsEvents() {
         const query = e.target.value.toLowerCase().trim();
         if (!select) return;
         ensureSettings();
-        const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
+        const prompts = getSavedPrompts();
         let options = `<option value="">-- 새 프롬프트 --</option>`;
         for (const p of prompts) {
             if (!query || p.name.toLowerCase().includes(query) || p.content.toLowerCase().includes(query)) {
@@ -69,7 +69,7 @@ export function bindSettingsEvents() {
         renderSettingsSavedPrompts();
     });
 
-    saveBtn?.addEventListener('click', () => {
+    saveBtn?.addEventListener('click', promptStorageAction(async () => {
         const nameInput = document.getElementById('sim-new-prompt-name');
         const contentInput = document.getElementById('sim-new-prompt-content');
         const name = nameInput?.value.trim();
@@ -81,40 +81,36 @@ export function bindSettingsEvents() {
         }
 
         ensureSettings();
-        const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
-
-        if (S.selectedPromptId) {
-            const found = prompts.find(p => p.id === S.selectedPromptId);
-            if (found) {
-                found.name = name;
-                found.content = content;
+        const selectedId = S.selectedPromptId;
+        const id = selectedId || `prompt_${uuidv4()}`;
+        if (!await updateSavedPrompts(prompts => {
+            if (selectedId) {
+                const found = prompts.find(p => p.id === selectedId);
+                if (found) { found.name = name; found.content = content; }
+            } else {
+                prompts.push({ id, name, content });
             }
-        } else {
-            const newId = `prompt_${uuidv4()}`;
-            prompts.push({ id: newId, name, content });
-            S.selectedPromptId = newId;
-        }
+        })) return;
+        S.selectedPromptId = id;
 
-        saveSettingsDebounced();
         renderSettingsSavedPrompts();
         if (typeof toastr !== 'undefined') toastr.success('저장되었습니다.', '시뮬 매니저');
-    });
+    }));
 
-    deleteBtn?.addEventListener('click', () => {
+    deleteBtn?.addEventListener('click', promptStorageAction(async () => {
         if (!S.selectedPromptId) return;
         if (!confirm('이 프롬프트를 삭제하시겠습니까?')) return;
 
         ensureSettings();
-        const prompts = extension_settings[EXTENSION_NAME].savedPrompts;
-        const idx = prompts.findIndex(p => p.id === S.selectedPromptId);
-        if (idx !== -1) {
-            prompts.splice(idx, 1);
-            saveSettingsDebounced();
-        }
+        const id = S.selectedPromptId;
+        if (!await updateSavedPrompts(prompts => {
+            const idx = prompts.findIndex(p => p.id === id);
+            if (idx !== -1) prompts.splice(idx, 1);
+        })) return;
         S.selectedPromptId = null;
         renderSettingsSavedPrompts();
         if (typeof toastr !== 'undefined') toastr.info('삭제되었습니다.', '시뮬 매니저');
-    });
+    }));
 
     // 프롬프트 관리 버튼
     document.getElementById('sim-open-prompt-manager-btn')?.addEventListener('click', () => {

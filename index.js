@@ -1,3 +1,5 @@
+import { initPromptStorage, reportPromptStorageError } from './prompt-storage.js';
+import { initCustomPresetStorage } from './preset.js';
 /**
  * SillyTavern - Simulation Manager
  *
@@ -155,8 +157,15 @@ function offerBranchSimCleanup() {
     }
 }
 
-(function init() {
+(async function init() {
     ensureSettings();
+    try {
+        await initPromptStorage();
+        await initCustomPresetStorage();
+    } catch (error) {
+        reportPromptStorageError(error);
+        return;
+    }
 
     // 1.5.0: 설정 파일에 박혀 있던 시뮬 본문 사본을 백업하고 걷어낸다 (1회)
     runLegacyStoreMigration();

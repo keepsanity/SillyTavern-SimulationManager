@@ -1,16 +1,15 @@
+import { getSavedPrompts } from '../prompt-storage.js';
 /**
  * 모아보기: 전체 채팅방 목록 → 방별 시뮬 목록 → 시뮬 상세.
  *
  * 읽기 전용이다. 목록은 설정에 저장된 인덱스(방 이름·개수·최신시각)만 보고 그리고,
  * 시뮬 본문은 방을 펼칠 때 그 채팅 파일 하나만 읽어 온다.
  */
-import { EXTENSION_NAME } from '../constants.js';
 import {
     escapeHtml,
     normalizePromptText,
     copyTextToClipboard,
 } from '../utils.js';
-import { extension_settings } from '../../../../extensions.js';
 import { ensureSettings } from '../config.js';
 import { S } from '../state.js';
 import {
@@ -98,7 +97,7 @@ export function renderGlobalListView() {
     html += `<div class="sim-global-title">
         <span><i class="fa-solid fa-layer-group"></i> 전체 시뮬레이션 모아보기</span>
         <span class="sim-global-actions">
-            <button class="sim-btn sim-btn-sm" id="sim-global-export" title="전체 시뮬을 JSON 파일로 백업"><i class="fa-solid fa-download"></i> 백업</button>
+            <button class="sim-btn sim-btn-sm" id="sim-global-export" title="전체 시뮬을 방별 JSON 으로 나눠 zip 백업"><i class="fa-solid fa-download"></i> 백업</button>
             <button class="sim-btn sim-btn-sm" id="sim-global-cleanup" title="삭제된 채팅·빈 항목 정리"><i class="fa-solid fa-broom"></i> 정리</button>
             <button class="sim-btn sim-btn-sm" id="sim-global-rescan" title="다시 스캔"><i class="fa-solid fa-arrows-rotate"></i> 새로고침</button>
         </span>
@@ -211,7 +210,7 @@ export async function renderGlobalSimListView() {
         html += `<div class="sim-empty">시뮬레이션을 불러오지 못했습니다.<br>새로고침으로 다시 스캔해 주세요.</div>`;
     } else {
         ensureSettings();
-        const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+        const savedPrompts = getSavedPrompts();
         for (const sim of sorted) {
             const responseCount = sim.responses ? sim.responses.length : 0;
             const date = new Date(sim.createdAt).toLocaleString();

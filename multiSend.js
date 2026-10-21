@@ -1,19 +1,17 @@
+import { getSavedPrompts, updateSavedPrompts } from './prompt-storage.js';
 /**
  * 다중 전송: 여러 채팅방을 순회하며 같은 시뮬을 생성한다.
  */
 import {
-    extension_settings,
     getContext,
 } from '../../../extensions.js';
 import {
     eventSource,
     event_types,
     substituteParams,
-    saveSettingsDebounced,
 } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
 import {
-    EXTENSION_NAME,
     DEBUG_PREFIX,
     SIM_SYSTEM_INSTRUCTION,
 } from './constants.js';
@@ -227,21 +225,22 @@ export function getSelectedMultiSendTargets() {
 }
 
 /** 프롬프트 자동 저장(단일 흐름과 동일 규칙) — 다중 전송 시 1회만. */
-export function maybeAutoSavePrompt(opts) {
+export async function maybeAutoSavePrompt(opts) {
     if (opts.noSavePrompt) return;
     ensureSettings();
-    const savedPrompts = extension_settings[EXTENSION_NAME].savedPrompts;
+    const savedPrompts = getSavedPrompts();
     const loadedPrompt = opts.loadedPromptId ? savedPrompts.find(p => p.id === opts.loadedPromptId) : null;
     const titleChanged = opts.customTitle && loadedPrompt && opts.customTitle !== loadedPrompt.name;
     const contentChanged = !savedPrompts.some(p => p.content === opts.rawPrompt);
     if (titleChanged || contentChanged) {
-        savedPrompts.push({
-            id: `prompt_${uuidv4()}`,
-            name: opts.customTitle || (opts.rawPrompt.length > 20 ? opts.rawPrompt.substring(0, 20) + '...' : opts.rawPrompt),
-            content: opts.rawPrompt,
+        const saved = await updateSavedPrompts(prompts => {
+            prompts.push({
+                id: `prompt_${uuidv4()}`,
+                name: opts.customTitle || (opts.rawPrompt.length > 20 ? opts.rawPrompt.substring(0, 20) + '...' : opts.rawPrompt),
+                content: opts.rawPrompt,
+            });
         });
-        saveSettingsDebounced();
-        renderSettingsSavedPrompts();
+        if (saved) renderSettingsSavedPrompts();
     }
 }
 
@@ -290,12 +289,12 @@ export async function handleMultiSendSimulation(targets, opts) {
         return;
     }
 
-    maybeAutoSavePrompt(opts);
-
     S.multiSendRunning = true;
     S.multiSendShouldStop = false;
     S.simGenerating = true; // 다른 시뮬 동작 차단
     S.simAborted = false;
+
+    await maybeAutoSavePrompt(opts);
 
     const origin = captureCurrentLocation();
     closePopup();
