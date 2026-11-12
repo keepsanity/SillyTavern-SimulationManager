@@ -9,6 +9,7 @@ import {
     eventSource,
     event_types,
     substituteParams,
+    chat,
 } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
 import {
@@ -21,6 +22,7 @@ import {
     escapeHtml,
 } from './utils.js';
 import { ensureSettings } from './config.js';
+import { makeChatAnchor, setResponseAnchor } from './responseData.js';
 import { S } from './state.js';
 import {
     getSimulations,
@@ -345,6 +347,7 @@ export async function handleMultiSendSimulation(targets, opts) {
             };
 
             S.simAborted = false;
+            const anchor = makeChatAnchor(chat);
             const rawResponse = await withGenerationPreset(opts.chosenPresetName, opts.chosenTogglePresetName, () =>
                 withSimIntercept({ kind: `다중 전송: ${target.name}`, position: sim.injectPosition }, () =>
                     runSimGeneration(SIM_SYSTEM_INSTRUCTION, resolved, sim.injectPosition))
@@ -362,6 +365,7 @@ export async function handleMultiSendSimulation(targets, opts) {
             }
 
             sim.responses.push(rawResponse);
+            setResponseAnchor(sim, 0, anchor);
             sim.currentIndex = 0;
 
             const sims = getSimulations(); // 이 방의 메타데이터

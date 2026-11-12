@@ -2,7 +2,8 @@
  * 시뮬 상세 뷰와 응답 파트 렌더러.
  */
 import { extension_settings } from '../../../../extensions.js';
-import { chat } from '../../../../../script.js';
+import { chat, showMoreMessages, getFirstDisplayedMessageId } from '../../../../../script.js';
+import { delay, flashHighlight } from '../../../../utils.js';
 import {
     EXTENSION_NAME,
     SIM_POSITION_LABELS,
@@ -32,6 +33,7 @@ import {
 } from '../store.js';
 import {
     handleContinueSimulation,
+    showDirectedContinueDialog,
     handleRegenerateSimulation,
     showInsertToChatDialog,
     showNewChatDialog,
@@ -41,10 +43,19 @@ import {
 import { openLoreEntryDialogForSim } from '../lorebook.js';
 import {
     goToList,
+    closePopup,
     maybeResetContentScroll,
 } from '../popup.js';
 import { translatePart } from '../translate.js';
-import { deleteResponse, deleteContinuation, appendPartRevision } from '../responseData.js';
+import {
+    deleteResponse,
+    deleteContinuation,
+    appendPartRevision,
+    getContinuationDirections,
+    getPartVariantInfo,
+    selectPartVariant,
+    resolveChatAnchor,
+} from '../responseData.js';
 import { refreshSimGeneratingButtons } from '../generation.js';
 
 export function renderDetailView() {
@@ -201,6 +212,7 @@ export function renderDetailView() {
                 ${responseCount > 1 ? `<button class="sim-btn-icon sim-btn-icon-danger" id="sim-delete-response" title="이 답변 삭제"><i class="fa-solid fa-xmark"></i> 삭제</button>` : ''}
             </div>
             ` : ''}
+            ${renderAnchorRow(sim, currentIdx, chat)}
             <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}" id="sim-response-display">
                 ${responseCount === 0 ? '아직 응답이 없습니다...' : renderResponseParts(sim, currentIdx, S.editingPartIdx, false)}
             </div>
@@ -215,10 +227,11 @@ export function renderDetailView() {
         footer.classList.remove('hidden');
         footer.innerHTML = `
         <div class="sim-detail-actions">
-            <button class="sim-btn sim-btn-sm sim-btn-danger" id="sim-delete-sim"><i class="fa-solid fa-trash"></i> 시뮬 삭제</button>
+            <button class="sim-btn sim-btn-sm sim-btn-danger" id="sim-delete-sim"><i class="fa-solid fa-trash"></i> 삭제</button>
             ${S.unsavedChatKey === getCurrentChatKey() ? '<button class="sim-btn sim-btn-sm" id="sim-retry-save">저장 재시도</button>' : ''}
             ${responseCount > 0 ? `<button class="sim-btn sim-btn-sm" id="sim-continue"><i class="fa-solid fa-forward"></i> 이어쓰기</button>` : ''}
-            <button class="sim-btn sim-btn-sm sim-btn-primary" id="sim-regenerate"><i class="fa-solid fa-rotate-right"></i> 답변 재생성</button>
+            ${responseCount > 0 ? `<button class="sim-btn sim-btn-sm" id="sim-continue-dir"><i class="fa-solid fa-signs-post"></i> OOC</button>` : ''}
+            <button class="sim-btn sim-btn-sm sim-btn-primary" id="sim-regenerate"><i class="fa-solid fa-rotate-right"></i> 재생성</button>
         </div>`;
     }
 
@@ -429,6 +442,13 @@ export function renderDetailView() {
     bindAlias(detailCharAlias, 'charAlias');
     bindAlias(detailUserAlias, 'userAlias');
 
+    document.getElementById('sim-anchor-jump')?.addEventListener('click', () => {
+        const found = resolveChatAnchor(chat, sim.responseAnchors?.[String(sim.currentIndex || 0)]);
+        if (!found) { toastr.warning('그 메시지를 찾을 수 없습니다.', '시뮬 매니저'); return; }
+        closePopup();
+        jumpToChatMessage(found.index);
+    });
+
     // 새 챗으로 시작
     document.getElementById('sim-new-chat-btn')?.addEventListener('click', async () => {
         const responseText = getFullResponseText(sim, sim.currentIndex || 0);
@@ -482,6 +502,22 @@ export function renderDetailView() {
                 case 'part-revision':
                     showPartRevisionDialog(sim, currentIdx, partIdx);
                     break;
+                case 'part-regenerate': {
+                    const direction = getContinuationDirections(sim, currentIdx)[partIdx - 1] || '';
+                    S.editingPartIdx = null;
+                    if (direction) showDirectedContinueDialog(sim, currentIdx, { regenerate: true, initial: direction });
+                    else handleContinueSimulation(sim, currentIdx, '', { regenerate: true });
+                    break;
+                }
+                case 'part-variant-prev':
+                case 'part-variant-next': {
+                    const info = getPartVariantInfo(sim, currentIdx, partIdx);
+                    selectPartVariant(sim, currentIdx, partIdx, info.current + (action === 'part-variant-next' ? 1 : -1));
+                    S.editingPartIdx = null;
+                    saveSimulations();
+                    renderDetailView();
+                    break;
+                }
                 case 'part-copy':
                     copyTextToClipboard(getPartText(sim, currentIdx, partIdx));
                     break;
@@ -532,6 +568,11 @@ export function renderDetailView() {
         handleContinueSimulation(sim, sim.currentIndex || 0);
     });
 
+    document.getElementById('sim-continue-dir')?.addEventListener('click', (e) => {
+        if (e.currentTarget.dataset.simStop === '1') { stopSimGeneration(); return; }
+        showDirectedContinueDialog(sim, sim.currentIndex || 0);
+    });
+
     document.getElementById('sim-regenerate')?.addEventListener('click', (e) => {
         if (e.currentTarget.dataset.simStop === '1') { stopSimGeneration(); return; }
         handleRegenerateSimulation(sim);
@@ -566,6 +607,43 @@ function replaceDetailGuard() {
     detailGuard?.abort();
     detailGuard = new AbortController();
     return detailGuard.signal;
+}
+
+/**
+ * 이 답변을 받았을 때 채팅이 어디까지였는지 한 줄로. liveChat 을 주면 지금 위치를 다시 찾아 이동 버튼을 붙인다.
+ * @param {object} sim
+ * @param {number} responseIdx
+ * @param {object[]|null} liveChat 현재 열린 채팅. 다른 방 시뮬(모아보기)은 null
+ */
+export function renderAnchorRow(sim, responseIdx, liveChat = null) {
+    const anchor = sim.responseAnchors?.[String(responseIdx)];
+    if (!anchor) return '';
+    const found = liveChat ? resolveChatAnchor(liveChat, anchor) : null;
+    const gone = !!liveChat && !found;
+    const number = found?.moved ? `#${found.index} (원래 #${anchor.index})` : `#${anchor.index}`;
+    const who = anchor.name ? ` ${escapeHtml(anchor.name)}` : '';
+    const quote = anchor.snippet ? ` · ${escapeHtml(anchor.snippet)}` : '';
+    return `<div class="sim-anchor-row${gone ? ' sim-anchor-gone' : ''}">
+        <span class="sim-anchor-text"><i class="fa-solid fa-location-dot"></i> ${number}${who}${gone ? ' · 삭제됨' : ''}${quote}</span>
+        ${found ? '<button class="sim-btn-icon sim-btn-icon-sm" id="sim-anchor-jump"><i class="fa-solid fa-arrow-up"></i> 이동</button>' : ''}
+    </div>`;
+}
+
+async function jumpToChatMessage(index) {
+    const first = getFirstDisplayedMessageId();
+    if (isFinite(first) && index < first) {
+        await showMoreMessages(first - index);
+        await delay(100);
+    }
+    const container = document.getElementById('chat');
+    const el = document.querySelector(`#chat .mes[mesid="${index}"]`);
+    if (!(el instanceof HTMLElement) || !(container instanceof HTMLElement)) {
+        toastr.warning('그 메시지를 화면에서 찾을 수 없습니다.', '시뮬 매니저');
+        return;
+    }
+    const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+    container.scrollTo({ top, behavior: 'smooth' });
+    flashHighlight($(el), 2000);
 }
 
 // ============================================
@@ -606,6 +684,16 @@ export function renderResponseParts(sim, responseIdx, currentEditPart = null, is
         const hasTranslation = partTranslations?.[String(partIdx)];
         const displayText = (S.showTranslated && hasTranslation) ? hasTranslation : part;
 
+        // 재생성으로 쌓인 버전은 마지막 파트에서만 넘겨본다 (중간 파트를 바꾸면 뒤 내용과 어긋남)
+        const variantInfo = isCont && partIdx === parts.length - 1 ? getPartVariantInfo(sim, responseIdx, partIdx) : { count: 1, current: 0 };
+        const variantNav = variantInfo.count > 1
+            ? `<span class="sim-part-variant-nav">
+                ${isGlobal ? '' : `<button class="sim-btn-icon sim-btn-icon-sm" data-action="part-variant-prev" data-part="${partIdx}" ${variantInfo.current <= 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i></button>`}
+                <span class="sim-response-counter">${variantInfo.current + 1} / ${variantInfo.count}</span>
+                ${isGlobal ? '' : `<button class="sim-btn-icon sim-btn-icon-sm" data-action="part-variant-next" data-part="${partIdx}" ${variantInfo.current >= variantInfo.count - 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right"></i></button>`}
+            </span>`
+            : '';
+
         // 액션 버튼
         ensureSettings();
         const translationOn = extension_settings[EXTENSION_NAME].translationEnabled;
@@ -632,14 +720,17 @@ export function renderResponseParts(sim, responseIdx, currentEditPart = null, is
             : '';
         const actions = isGlobal
             ? `<div class="sim-part-actions">
+            ${variantNav}
             ${viewTranslationBtn}
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-copy" data-part="${partIdx}" title="복사"><i class="fa-solid fa-copy"></i></button>
         </div>`
             : `<div class="sim-part-actions">
+            ${variantNav}
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-edit" data-part="${partIdx}" title="수정"><i class="fa-solid fa-pen"></i></button>
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-revision" data-part="${partIdx}" title="통제광"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
             <button class="sim-btn-icon sim-btn-icon-sm" data-action="part-copy" data-part="${partIdx}" title="복사"><i class="fa-solid fa-copy"></i></button>
             ${translateBtn}
+            ${isCont && partIdx === parts.length - 1 ? `<button class="sim-btn-icon sim-btn-icon-sm" data-action="part-regenerate" data-part="${partIdx}" title="이 파트 재생성"><i class="fa-solid fa-rotate-right"></i></button>` : ''}
             ${isCont ? `<button class="sim-btn-icon sim-btn-icon-sm sim-btn-icon-danger" data-action="part-delete" data-part="${partIdx}" title="삭제"><i class="fa-solid fa-xmark"></i></button>` : ''}
         </div>`;
 

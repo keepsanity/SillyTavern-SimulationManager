@@ -15,6 +15,7 @@ import {
     saveSimulations,
 } from './store.js';
 import { openPopupToSim } from './popup.js';
+import { makeChatAnchor, setResponseAnchor } from './responseData.js';
 
 
 /**
@@ -57,6 +58,7 @@ export function captureMessageToSim(mesId) {
         swapPronouns: false,
         importedFrom: 'message', // 메시지에서 캡처했음을 표시
     };
+    setResponseAnchor(sim, 0, makeChatAnchor(chat, idx));
     sims.push(sim);
     saveSimulations();
 

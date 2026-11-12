@@ -25,6 +25,7 @@ import { uuidv4 } from '../../../utils.js';
 import {
     DEBUG_PREFIX,
     SIM_CONTINUE_INSTRUCTION,
+    SIM_CONTINUE_DIRECTED_INSTRUCTION,
     SIM_SYSTEM_INSTRUCTION,
     SIM_POSITIONS,
     SIM_DIRECTIVE_KEY,
@@ -33,12 +34,13 @@ import {
 import {
     normalizeSimPosition,
     applySwap,
+    getSimAliases,
     normalizePromptText,
     getFullResponseText,
 } from './utils.js';
 import { ensureSettings } from './config.js';
 import { withSimulationPreset as applySimulationPreset } from './preset.js';
-import { appendPartRevision } from './responseData.js';
+import { appendPartRevision, appendContinuation, appendContinuationRegeneration, makeChatAnchor, setResponseAnchor } from './responseData.js';
 import { withPromptIntercept } from './promptPreview.js';
 import { S } from './state.js';
 import {
@@ -100,7 +102,7 @@ export function refreshSimGeneratingButtons() {
         active.dataset.simStop = '1';
         active.disabled = false;
         active.classList.add('sim-btn-danger');
-        active.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 취소하기';
+        active.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 취소';
     }
 }
 
@@ -136,7 +138,7 @@ export function enterSimGeneratingMode(activeBtnId) {
             b.dataset.simStop = '1';
             b.disabled = false;
             b.classList.add('sim-btn-danger');
-            b.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 취소하기';
+            b.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 취소';
         } else {
             b.disabled = true;
         }
@@ -310,6 +312,7 @@ export async function sendSimulation({
         renderDetailView();
     }
 
+    const anchor = makeChatAnchor(chat);
     enterSimGeneratingMode('sim-regenerate');
     try {
         if (!isTemp) {
@@ -345,6 +348,7 @@ export async function sendSimulation({
         // 생성 중에 시뮬 배열이 갈렸을 수 있으니 저장형은 id 로 다시 잡는다
         const targetSim = sim;
         targetSim.responses.push(rawResponse);
+        setResponseAnchor(targetSim, 0, anchor);
         targetSim.currentIndex = 0;
         if (!isTemp) {
             getSimulations().push(targetSim);
@@ -436,6 +440,7 @@ export async function handleRegenerateSimulation(sim) {
     if (S.simGenerating || S.isTranslating || isGenerating()) return;
     const resolvedPrompt = substituteParams(getEffectivePromptText(sim));
 
+    const anchor = makeChatAnchor(chat);
     enterSimGeneratingMode('sim-regenerate');
 
     const simId = sim.id;
@@ -450,6 +455,7 @@ export async function handleRegenerateSimulation(sim) {
         const targetSim = (S.tempSim && S.tempSim.id === simId) ? S.tempSim : liveSims.find(s => s.id === simId) || sim;
         if (!Array.isArray(targetSim.responses)) targetSim.responses = [];
         targetSim.responses.push(rawResponse);
+        setResponseAnchor(targetSim, targetSim.responses.length - 1, anchor);
         targetSim.currentIndex = targetSim.responses.length - 1;
         if (!S.tempSim || S.tempSim.id !== simId) await saveSimulationsVerified();
 
@@ -469,7 +475,14 @@ export async function handleRegenerateSimulation(sim) {
     }
 }
 
-export async function handleContinueSimulation(sim, responseIdx) {
+/**
+ * @param {object} sim
+ * @param {number} responseIdx
+ * @param {string} [direction=''] 비어 있으면 일반 이어쓰기, 있으면 OOC 이어쓰기
+ * @param {object} [opts]
+ * @param {boolean} [opts.regenerate=false] 마지막 이어쓰기 파트를 다시 뽑아 그 파트의 새 버전으로 추가
+ */
+export async function handleContinueSimulation(sim, responseIdx, direction = '', { regenerate = false } = {}) {
     if (S.simGenerating || S.isTranslating || isGenerating()) return;
     const currentResponse = sim.responses[responseIdx];
     if (!currentResponse) {
@@ -477,46 +490,99 @@ export async function handleContinueSimulation(sim, responseIdx) {
         return;
     }
 
+    const key = String(responseIdx);
+    const priorParts = sim.continuations?.[key] || [];
+    if (regenerate && !priorParts.length) return;
+    const label = regenerate ? '파트 재생성' : '이어쓰기';
+
     const continuePrompt = substituteParams(getEffectivePromptText(sim));
 
-    enterSimGeneratingMode('sim-continue');
+    direction = String(direction || '').trim();
+    const resolvedDirection = direction
+        ? substituteParams(applySwap(direction, !!sim.swapCharUser, !!sim.swapPronouns, getSimAliases(sim)))
+        : '';
+
+    enterSimGeneratingMode(regenerate ? 'sim-regenerate' : direction ? 'sim-continue-dir' : 'sim-continue');
 
     try {
-        const fullResponse = getFullResponseText(sim, responseIdx);
+        const fullResponse = regenerate
+            ? getFullResponseText({ responses: sim.responses, continuations: { [key]: priorParts.slice(0, -1) } }, responseIdx)
+            : getFullResponseText(sim, responseIdx);
         // 이어쓰기: 지시문은 system, ghost/inject 본문은 "원래 요청 + 지금까지의 응답"
-        const continueDirective = SIM_CONTINUE_INSTRUCTION;
-        const continueBody = `<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${fullResponse}\n</response_so_far>`;
+        const continueDirective = direction ? SIM_CONTINUE_DIRECTED_INSTRUCTION : SIM_CONTINUE_INSTRUCTION;
+        let continueBody = `<original_request>\n${continuePrompt}\n</original_request>\n\n<response_so_far>\n${fullResponse}\n</response_so_far>`;
+        if (direction) continueBody += `\n\n<continuation_direction>\n${resolvedDirection}\n</continuation_direction>`;
         const rawResponse = await withGenerationPreset(sim.presetName, sim.togglePresetName, () =>
             withSimIntercept(
-                { kind: '이어쓰기', position: sim.injectPosition },
+                { kind: regenerate ? '파트 재생성' : direction ? 'OOC 이어쓰기' : '이어쓰기', position: sim.injectPosition },
                 () => runSimGeneration(continueDirective, continueBody, sim.injectPosition))
         );
         // preset 전환 중 chat_metadata 가 바뀌었을 수 있으므로 live sim 재조회
         const liveSims = getSimulations();
         const target = (S.tempSim && S.tempSim.id === sim.id) ? S.tempSim : liveSims.find(s => s.id === sim.id) || sim;
-        // continuations 배열에 파트 분리 저장
-        if (!target.continuations) target.continuations = {};
-        const key = String(responseIdx);
-        if (!Array.isArray(target.continuations[key])) target.continuations[key] = [];
-        target.continuations[key].push(rawResponse);
-
-        // 번역 캐시 무효화
-        if (target.translations) delete target.translations[key];
+        if (regenerate) appendContinuationRegeneration(target, responseIdx, rawResponse, direction);
+        else appendContinuation(target, responseIdx, rawResponse, direction);
 
         if (!S.tempSim || S.tempSim.id !== target.id) await saveSimulationsVerified();
 
-        toastr.success('응답이 이어쓰기되었습니다.', '시뮬 매니저');
+        toastr.success(regenerate ? '파트를 재생성했습니다.' : '응답이 이어쓰기되었습니다.', '시뮬 매니저');
     } catch (err) {
         if (S.simAborted) {
-            toastr.info('이어쓰기를 취소했습니다.', '시뮬 매니저');
+            toastr.info(`${label}${regenerate ? "을" : "를"} 취소했습니다.`, '시뮬 매니저');
         } else {
             console.error(DEBUG_PREFIX, 'Continue failed:', err);
-            toastr.error('이어쓰기에 실패했습니다.', '시뮬 매니저');
+            toastr.error(`${label}에 실패했습니다.`, '시뮬 매니저');
         }
     } finally {
         exitSimGeneratingMode();
         if (S.currentView === 'detail' && S.currentSimId === sim.id) renderDetailView();
     }
+}
+
+/**
+ * 지시를 입력받아 이어쓰기. 마지막 지시는 sim 에 남겨 다음에 다시 채워준다.
+ * regenerate 면 그 파트의 지시(initial)를 채워서 마지막 파트를 다시 뽑는다.
+ */
+export function showDirectedContinueDialog(sim, responseIdx, { regenerate = false, initial = '' } = {}) {
+    if (S.simGenerating || S.isTranslating || isGenerating()) return;
+    const sourceChatKey = getCurrentChatKey();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'sim-dialog-overlay';
+    overlay.innerHTML = `
+        <div class="sim-dialog-box">
+            <div class="sim-dialog-title"><i class="fa-solid fa-signs-post"></i> ${regenerate ? 'OOC 재생성' : 'OOC 이어쓰기'}</div>
+            <p style="font-size:12px; color:var(--SmartThemeBodyColor, #aaa); margin:0 0 10px;">다음 내용이 어떻게 흘러갈지 적어주세요.</p>
+            <textarea id="sim-continue-direction" class="sim-revision-textarea" placeholder="어떤 방향으로 이어갈까요?"></textarea>
+            <p style="font-size:11px; opacity:0.6; margin:6px 0 0;">마지막에 쓴 지시는 저장됩니다.</p>
+            <div class="sim-dialog-buttons">
+                <button class="sim-btn" id="sim-continue-direction-cancel">취소</button>
+                <button class="sim-btn sim-btn-primary" id="sim-continue-direction-send"><i class="fa-solid ${regenerate ? 'fa-rotate-right' : 'fa-forward'}"></i> ${regenerate ? '재생성' : '이어쓰기'}</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    const textarea = overlay.querySelector('#sim-continue-direction');
+    textarea.value = (regenerate ? initial : '') || sim.continueDirection || '';
+
+    overlay.querySelector('#sim-continue-direction-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('#sim-continue-direction-send').addEventListener('click', () => {
+        if (S.simGenerating || S.isTranslating || isGenerating()) return;
+        if (sourceChatKey !== getCurrentChatKey()) {
+            overlay.remove();
+            toastr.warning('채팅방이 변경되었습니다. 원래 채팅방에서 다시 시도해주세요.');
+            return;
+        }
+        const direction = textarea.value.trim();
+        if (!direction) { toastr.warning('지시 내용을 입력해주세요.'); return; }
+        overlay.remove();
+
+        sim.continueDirection = direction;
+        if (!S.tempSim || S.tempSim.id !== sim.id) saveSimulations();
+        handleContinueSimulation(sim, responseIdx, direction, { regenerate });
+    });
 }
 
 export function setSimDirectiveSystem(directive) {

@@ -686,6 +686,7 @@
 
 .sim-detail-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     justify-content: space-between;
     flex-shrink: 0;
@@ -1887,4 +1888,38 @@
 /* 숫자 입력은 다른 칸만큼 넓을 이유가 없다 */
 .sim-dialog-box-form input[type="number"].text_pole {
     max-width: 120px;
+}
+
+/* ---- 답변 시점 한 줄 ---- */
+.sim-anchor-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    opacity: 0.75;
+}
+
+.sim-anchor-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.sim-anchor-row .sim-btn-icon {
+    flex-shrink: 0;
+}
+
+.sim-anchor-gone .sim-anchor-text {
+    text-decoration: line-through;
+}
+
+/* ---- 파트 버전 넘겨보기 ---- */
+.sim-part-variant-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: auto;
 }

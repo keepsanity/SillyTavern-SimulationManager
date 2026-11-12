@@ -24,6 +24,7 @@ import { maybeResetContentScroll } from '../popup.js';
 import {
     getPartText,
     renderResponseParts,
+    renderAnchorRow,
 } from './detail.js';
 
 /**
@@ -305,6 +306,7 @@ export function renderGlobalDetailView() {
                 </div>
                 ` : ''}
             </div>
+            ${renderAnchorRow(sim, currentIdx)}
             <div class="sim-response-text mes_text ${responseCount === 0 ? 'loading' : ''}" id="sim-gv-response-display">
                 ${responseCount === 0 ? '응답 없음' : renderResponseParts(sim, currentIdx, null, true)}
             </div>

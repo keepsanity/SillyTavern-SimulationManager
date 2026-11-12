@@ -36,6 +36,14 @@ export const SIM_CONTINUE_INSTRUCTION = `<simulation_continue_directive priority
 <rule>Output ONLY the continuation text. Do NOT include any meta-commentary or acknowledgment.</rule>
 </simulation_continue_directive>`;
 
+// OOC 이어쓰기: 톤 유지 규칙 대신 유저 지시를 따르게 한다
+export const SIM_CONTINUE_DIRECTED_INSTRUCTION = SIM_CONTINUE_INSTRUCTION.replace(
+    '<rule>Maintain the same tone, style, and context as the existing response.</rule>',
+    `<rule>The user gave a direction for this continuation inside <continuation_direction>. What happens next MUST follow that direction, even if it changes the mood or course of the scene.</rule>
+<rule>Treat the direction as a steering note, not as text to quote. Get there naturally from where the response ended.</rule>
+<rule>Keep the same writing style, format, and established context as the existing response.</rule>`,
+);
+
 export const SIM_SYSTEM_INSTRUCTION = `<simulation_directive priority="critical">
 <rule>This is a STANDALONE SIMULATION requested by the user.</rule>
 <rule>FOLLOW OOC REQUEST ONLY. Generate a response based ONLY on the user's simulation request below.</rule>
