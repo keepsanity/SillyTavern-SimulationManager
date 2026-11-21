@@ -45,6 +45,7 @@ import {
     normalizeLoreDepth,
 } from './config.js';
 import { S } from './state.js';
+import { purgeLeakedSimGhosts } from './generation.js';
 import {
     getSimulations,
     getCurrentChatKey,
@@ -59,7 +60,6 @@ import {
 } from './popup.js';
 import {
     bindSettingsEvents,
-    renderSettingsSavedPrompts,
 } from './settingsPanel.js';
 import { registerSlashCommands } from './slashCommands.js';
 import { renderListView } from './views/list.js';
@@ -399,7 +399,6 @@ function offerBranchSimCleanup() {
         }
 
         bindSettingsEvents();
-        renderSettingsSavedPrompts();
     }
 
     // 3. 지팡이 메뉴에 버튼 추가
@@ -415,6 +414,7 @@ function offerBranchSimCleanup() {
 
     // 4. 채팅 변경 시 뷰 초기화 + 글로벌 동기화
     eventSource.on(event_types.CHAT_CHANGED, () => {
+        purgeLeakedSimGhosts().catch(e => console.error(DEBUG_PREFIX, 'ghost cleanup failed:', e));
         S.currentView = 'list';
         S.currentSimId = null;
         S.isEditingPrompt = false;

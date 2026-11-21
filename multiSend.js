@@ -38,7 +38,6 @@ import {
     closePopup,
     openPopupToSim,
 } from './popup.js';
-import { renderSettingsSavedPrompts } from './settingsPanel.js';
 
 
 /** 현재 위치(캐릭터/그룹) 키. 대상 목록에서 '현재' 표시용. */
@@ -235,14 +234,13 @@ export async function maybeAutoSavePrompt(opts) {
     const titleChanged = opts.customTitle && loadedPrompt && opts.customTitle !== loadedPrompt.name;
     const contentChanged = !savedPrompts.some(p => p.content === opts.rawPrompt);
     if (titleChanged || contentChanged) {
-        const saved = await updateSavedPrompts(prompts => {
+        await updateSavedPrompts(prompts => {
             prompts.push({
                 id: `prompt_${uuidv4()}`,
                 name: opts.customTitle || (opts.rawPrompt.length > 20 ? opts.rawPrompt.substring(0, 20) + '...' : opts.rawPrompt),
                 content: opts.rawPrompt,
             });
         });
-        if (saved) renderSettingsSavedPrompts();
     }
 }
 

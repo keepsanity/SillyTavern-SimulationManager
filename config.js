@@ -30,8 +30,8 @@ const defaultSettings = {
     translationCustomPrompt: '',
     translationProfileId: '',
     translationVertexAuthMode: 'express', // 'express' | 'full'
-    // 기본 주입 위치 ('last_message' | 'depth_1' | 'depth_0' | 'bottom')
-    defaultInjectPosition: 'last_message',
+    // 기본 주입 위치 ('depth_0' | 'temp_message' | 'depth_1' | 'bottom')
+    defaultInjectPosition: 'depth_0',
     // 표시(브랜딩) 설정: 지팡이 버튼 + 헤더에 공통 적용
     displayName: '시뮬레이션',
     displayIcon: 'fa-flask',
@@ -77,7 +77,7 @@ export function ensureSettings() {
     if (typeof s.translationCustomPrompt !== 'string') s.translationCustomPrompt = '';
     if (typeof s.translationProfileId !== 'string') s.translationProfileId = '';
     if (typeof s.translationVertexAuthMode !== 'string' || s.translationVertexAuthMode === '') s.translationVertexAuthMode = 'express';
-    if (typeof s.defaultInjectPosition !== 'string') s.defaultInjectPosition = 'last_message';
+    if (typeof s.defaultInjectPosition !== 'string') s.defaultInjectPosition = 'depth_0';
     if (typeof s.displayName !== 'string' || s.displayName.trim() === '') s.displayName = '시뮬레이션';
     if (typeof s.displayIcon !== 'string' || s.displayIcon.trim() === '') s.displayIcon = 'fa-flask';
     if (!PROMPT_SORT_ORDERS.includes(s.promptSortOrder)) s.promptSortOrder = 'newest';

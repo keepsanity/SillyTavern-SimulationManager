@@ -51,16 +51,17 @@ export const SIM_SYSTEM_INSTRUCTION = `<simulation_directive priority="critical"
 </simulation_directive>`;
 
 // 시뮬 주입 위치
+// 예전에 저장된 'last_message' 는 normalizeSimPosition 이 기본값(깊이 0)으로 읽는다.
 export const SIM_POSITIONS = {
-    LAST_MESSAGE: 'last_message', // history 끝의 USER 주입 — 실제 chat 배열은 수정하지 않음
+    DEPTH_0: 'depth_0',           // IN_CHAT depth 0 USER 주입 — chat 배열은 안 건드림, 스캔 대상 아님. 기본값
+    TEMP_MESSAGE: 'temp_message', // 임시 유저 메시지로 chat 끝에 넣었다 뺌 — 로어북 스캔 대상
     DEPTH_1: 'depth_1',           // IN_CHAT depth 1 USER — 진짜 마지막 메시지 앞
-    DEPTH_0: 'depth_0',           // IN_CHAT depth 0 USER — 진짜 마지막 메시지 뒤 (history 안)
     BOTTOM: 'bottom',             // quietPrompt — </history> 밖, 프롬프트 맨 끝
 };
 export const SIM_POSITION_LABELS = {
-    [SIM_POSITIONS.LAST_MESSAGE]: '마지막 메시지 (기본)',
+    [SIM_POSITIONS.DEPTH_0]: '마지막 메시지 (깊이 0)',
+    [SIM_POSITIONS.TEMP_MESSAGE]: '마지막 메시지 (임시 삽입)',
     [SIM_POSITIONS.DEPTH_1]: '깊이 1',
-    [SIM_POSITIONS.DEPTH_0]: '깊이 0',
     [SIM_POSITIONS.BOTTOM]: '맨 밑',
 };
 export const SIM_DIRECTIVE_KEY = 'sim_manager_directive';

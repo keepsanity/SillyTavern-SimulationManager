@@ -55,10 +55,6 @@ export const S = {
     /** 선택된 대상 키 (type:id) */
     multiSendSelKeys: new Set(),
 
-    // ── 설정 패널 상태 ────────────────────────
-    /** 설정의 저장된 프롬프트 목록에서 선택된 항목 */
-    selectedPromptId: null,
-
     // ── 스크롤 리셋 판정용 (직전 렌더 기록) ─────
     lastRenderedView: null,
     lastRenderedSimId: null,

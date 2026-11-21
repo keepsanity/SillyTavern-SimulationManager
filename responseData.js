@@ -33,27 +33,32 @@ export function deleteContinuation(sim, responseIndex, partIndex) {
     if (sim.translations) delete sim.translations[key];
 }
 
-/** Use the existing response navigator for revisions; leave the original untouched. */
+/**
+ * Keep the original either way: revising the first response adds a response,
+ * revising a continuation adds a version of that part.
+ * @returns {number} the response index now holding the revision
+ */
 export function appendPartRevision(sim, responseIndex, partIndex, text) {
     const oldKey = String(responseIndex);
     const parts = [...(sim.continuations?.[oldKey] || [])];
     const directions = getContinuationDirections(sim, responseIndex);
-    const variants = JSON.parse(JSON.stringify(getPartVariants(sim, responseIndex)));
     if (!sim.responses[responseIndex] || partIndex < 0 || partIndex > parts.length) throw new Error('수정할 파트가 없습니다.');
+    if (partIndex > 0) {
+        appendPartVariant(sim, responseIndex, partIndex, text, directions[partIndex - 1]);
+        return responseIndex;
+    }
+    const variants = JSON.parse(JSON.stringify(getPartVariants(sim, responseIndex)));
     const next = sim.responses.length;
-    sim.responses.push(partIndex === 0 ? text : sim.responses[responseIndex]);
-    if (partIndex > 0) parts[partIndex - 1] = text;
+    sim.responses.push(text);
     if (parts.length) {
         sim.continuations ||= {};
         sim.continuations[String(next)] = parts;
     }
     setContinuationDirections(sim, next, directions);
-    const revised = partIndex > 0 ? variants[partIndex - 1] : null;
-    if (revised) revised.texts[revised.current] = text;
     setPartVariants(sim, next, variants);
     setResponseAnchor(sim, next, sim.responseAnchors?.[oldKey]);
     const translations = { ...(sim.partTranslations?.[oldKey] || {}) };
-    delete translations[String(partIndex)];
+    delete translations['0'];
     if (Object.keys(translations).length) {
         sim.partTranslations ||= {};
         sim.partTranslations[String(next)] = translations;
@@ -124,23 +129,27 @@ function showPartVariant(sim, responseIndex, partIndex, variant) {
     if (sim.translations) delete sim.translations[key];
 }
 
-/** Regenerating the last continuation keeps the old text as another version of that same part. */
-export function appendContinuationRegeneration(sim, responseIndex, text, direction = '') {
+/** Add another version of a continuation part and show it; earlier versions stay browsable. */
+function appendPartVariant(sim, responseIndex, partIndex, text, direction = '') {
     const key = String(responseIndex);
-    const count = sim.continuations?.[key]?.length || 0;
-    if (!count) throw new Error('재생성할 이어쓰기 파트가 없습니다.');
     const variants = getPartVariants(sim, responseIndex);
-    const variant = variants[count - 1] || {
-        texts: [sim.continuations[key][count - 1]],
-        directions: [getContinuationDirections(sim, responseIndex)[count - 1]],
+    const variant = variants[partIndex - 1] || {
+        texts: [sim.continuations[key][partIndex - 1]],
+        directions: [getContinuationDirections(sim, responseIndex)[partIndex - 1]],
         current: 0,
     };
     variant.texts.push(text);
     variant.directions.push(direction);
     variant.current = variant.texts.length - 1;
-    variants[count - 1] = variant;
+    variants[partIndex - 1] = variant;
     setPartVariants(sim, responseIndex, variants);
-    showPartVariant(sim, responseIndex, count, variant);
+    showPartVariant(sim, responseIndex, partIndex, variant);
+}
+
+export function appendContinuationRegeneration(sim, responseIndex, text, direction = '') {
+    const count = sim.continuations?.[String(responseIndex)]?.length || 0;
+    if (!count) throw new Error('재생성할 이어쓰기 파트가 없습니다.');
+    appendPartVariant(sim, responseIndex, count, text, direction);
 }
 
 export function selectPartVariant(sim, responseIndex, partIndex, variantIndex) {

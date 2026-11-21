@@ -20,6 +20,7 @@ import {
     eventSource,
     event_types,
     isGenerating,
+    main_api,
 } from '../../../../script.js';
 import { uuidv4 } from '../../../utils.js';
 import {
@@ -57,7 +58,6 @@ import {
     sameLocation,
 } from './multiSend.js';
 import { showSimNotification } from './popup.js';
-import { renderSettingsSavedPrompts } from './settingsPanel.js';
 import { renderDetailView } from './views/detail.js';
 import { renderCreateView } from './views/list.js';
 
@@ -323,14 +323,13 @@ export async function sendSimulation({
                 const contentChanged = !savedPrompts.some(p => p.content === rawPrompt);
 
                 if (titleChanged || contentChanged) {
-                    const saved = await updateSavedPrompts(prompts => {
+                    await updateSavedPrompts(prompts => {
                         prompts.push({
                             id: `prompt_${uuidv4()}`,
                             name: customTitle || (rawPrompt.length > 20 ? rawPrompt.substring(0, 20) + '...' : rawPrompt),
                             content: rawPrompt,
                         });
                     });
-                    if (saved) renderSettingsSavedPrompts();
                 }
             }
         }
@@ -605,16 +604,34 @@ export function clearSimOocInChat() {
  *  - ooc:       OOC 본문 (유저가 입력한 시뮬 프롬프트 등)
  *  - position:  SIM_POSITIONS.* 중 하나 (sim 별 저장값)
  */
-export async function runSimGeneration(directive, ooc, position = SIM_POSITIONS.LAST_MESSAGE) {
+export async function runSimGeneration(directive, ooc, position = SIM_POSITIONS.DEPTH_0) {
     position = normalizeSimPosition(position);
     let quietPromptArg = '';
+    // 프롬프트가 조립되면 임시 메시지는 더 필요 없다. 확인창이 뜨기 전에 먼저 뺀다.
+    const promptReadyEvent = main_api === 'openai'
+        ? event_types.CHAT_COMPLETION_PROMPT_READY
+        : event_types.GENERATE_AFTER_COMBINE_PROMPTS;
+    const onPromptReady = (data) => { if (!data?.dryRun) removeActiveGhost(); };
+
+    await purgeLeakedSimGhosts().catch(e => console.error(DEBUG_PREFIX, 'ghost cleanup failed:', e));
 
     try {
         switch (position) {
-            case SIM_POSITIONS.LAST_MESSAGE:
+            case SIM_POSITIONS.TEMP_MESSAGE:
                 setSimDirectiveSystem(directive);
-                // Inject at the end of history without putting a temporary message in chat.
-                setSimOocInChat(ooc, 0);
+                // 진짜 유저 턴으로 잠깐 넣는다 — 로어북 스캔과 깊이 0 주입 순서가 실제 전송과 같아진다.
+                activeGhost = {
+                    name: getContext()?.name1 || 'User',
+                    is_user: true,
+                    is_system: false,
+                    send_date: Date.now(),
+                    mes: ooc,
+                    extra: { [SIM_GHOST_FLAG]: true },
+                };
+                activeGhostChat = chat;
+                activeGhostChat.push(activeGhost);
+                if (eventSource.makeFirst) eventSource.makeFirst(promptReadyEvent, onPromptReady);
+                else eventSource.on(promptReadyEvent, onPromptReady);
                 break;
             case SIM_POSITIONS.DEPTH_1:
                 setSimDirectiveSystem(directive);
@@ -631,9 +648,45 @@ export async function runSimGeneration(directive, ooc, position = SIM_POSITIONS.
         }
         return await generateQuietPrompt({ quietPrompt: quietPromptArg, quietToLoud: true });
     } finally {
+        eventSource.removeListener(promptReadyEvent, onPromptReady);
+        removeActiveGhost();
         clearSimDirectiveSystem();
         clearSimOocInChat();
+        // 생성 중 채팅방을 옮겼다면 그 채팅의 잔류분은 아직 안 치워졌다.
+        purgeLeakedSimGhosts().catch(e => console.error(DEBUG_PREFIX, 'ghost cleanup failed:', e));
     }
+}
+
+const SIM_GHOST_FLAG = 'sim_manager_ghost';
+let activeGhost = null;
+let activeGhostChat = null;
+let purging = null;
+
+function removeActiveGhost() {
+    if (!activeGhost) return;
+    const idx = activeGhostChat.lastIndexOf(activeGhost);
+    if (idx !== -1) activeGhostChat.splice(idx, 1);
+    activeGhost = null;
+    activeGhostChat = null;
+}
+
+/** 생성 도중 채팅이 저장돼 파일에 남은 임시 메시지를 걷어낸다. 진행 중이면 그 작업을 돌려준다. */
+export function purgeLeakedSimGhosts() {
+    if (purging) return purging;
+    if (activeGhost || !chat.some(m => m?.extra?.[SIM_GHOST_FLAG])) return Promise.resolve(false);
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (chat[i]?.extra?.[SIM_GHOST_FLAG]) chat.splice(i, 1);
+    }
+    purging = (async () => {
+        try {
+            await saveChatConditional();
+            await printMessages();
+            return true;
+        } finally {
+            purging = null;
+        }
+    })();
+    return purging;
 }
 
 
@@ -720,7 +773,9 @@ You are an editor. Rewrite ONLY the original_message above based on the feedback
             appendPartRevision(target, responseIdx, partIdx, rawResponse);
 
             if (!S.tempSim || S.tempSim.id !== target.id) await saveSimulationsVerified();
-            toastr.success('수정본을 새 답변으로 저장했습니다. 이전 답변에서 원문을 볼 수 있습니다.', '통제광');
+            toastr.success(partIdx === 0
+                ? '수정본을 새 답변으로 저장했습니다. 이전 답변에서 원문을 볼 수 있습니다.'
+                : '수정본을 이 파트의 새 버전으로 저장했습니다. 파트의 ‹ › 로 원문을 볼 수 있습니다.', '통제광');
         } catch (err) {
             if (S.simAborted) {
                 toastr.info('수정 요청을 취소했습니다.', '통제광');

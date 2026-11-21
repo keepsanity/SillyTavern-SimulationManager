@@ -492,11 +492,19 @@ export function renderDetailView() {
                     if (!textarea) return;
                     const newText = textarea.value.trim();
                     if (!newText) { alert('내용을 입력해주세요.'); return; }
+                    const oldText = partIdx === 0 ? sim.responses[currentIdx] : sim.continuations?.[key]?.[partIdx - 1];
+                    if (newText === String(oldText ?? '').trim()) {
+                        S.editingPartIdx = null;
+                        renderDetailView();
+                        break;
+                    }
                     appendPartRevision(sim, currentIdx, partIdx, newText);
                     S.editingPartIdx = null;
                     saveSimulations();
                     renderDetailView();
-                    toastr.success('파트가 수정되었습니다.', '시뮬 매니저');
+                    toastr.success(partIdx === 0
+                        ? '수정본을 새 답변으로 저장했습니다.'
+                        : '수정본을 이 파트의 새 버전으로 저장했습니다.', '시뮬 매니저');
                     break;
                 }
                 case 'part-revision':
@@ -684,8 +692,7 @@ export function renderResponseParts(sim, responseIdx, currentEditPart = null, is
         const hasTranslation = partTranslations?.[String(partIdx)];
         const displayText = (S.showTranslated && hasTranslation) ? hasTranslation : part;
 
-        // 재생성으로 쌓인 버전은 마지막 파트에서만 넘겨본다 (중간 파트를 바꾸면 뒤 내용과 어긋남)
-        const variantInfo = isCont && partIdx === parts.length - 1 ? getPartVariantInfo(sim, responseIdx, partIdx) : { count: 1, current: 0 };
+        const variantInfo = isCont ? getPartVariantInfo(sim, responseIdx, partIdx) : { count: 1, current: 0 };
         const variantNav = variantInfo.count > 1
             ? `<span class="sim-part-variant-nav">
                 ${isGlobal ? '' : `<button class="sim-btn-icon sim-btn-icon-sm" data-action="part-variant-prev" data-part="${partIdx}" ${variantInfo.current <= 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i></button>`}

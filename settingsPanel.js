@@ -1,117 +1,15 @@
-import { getSavedPrompts, updateSavedPrompts, promptStorageAction } from './prompt-storage.js';
 /**
- * 확장 설정 패널: 저장된 프롬프트 목록 렌더 + 설정 이벤트 바인딩.
+ * 확장 설정 패널의 버튼 이벤트 바인딩.
  */
 import { extension_settings } from '../../../extensions.js';
-import { uuidv4 } from '../../../utils.js';
 import { EXTENSION_NAME } from './constants.js';
-import { escapeHtml } from './utils.js';
 import { ensureSettings } from './config.js';
 import { S } from './state.js';
 import { openPopup } from './popup.js';
 import { renderGlobalListView, rescanWithFeedback } from './views/global.js';
 import { renderPromptManagerView } from './views/prompts.js';
 
-export function renderSettingsSavedPrompts() {
-    ensureSettings();
-    const select = document.getElementById('sim-prompt-select');
-    const nameInput = document.getElementById('sim-new-prompt-name');
-    const contentInput = document.getElementById('sim-new-prompt-content');
-    const deleteBtn = document.getElementById('sim-delete-prompt-btn');
-    if (!select) return;
-
-    const prompts = getSavedPrompts();
-
-    let options = '<option value="">-- 새로 생성하기 --</option>';
-    for (const p of prompts) {
-        const selected = S.selectedPromptId === p.id ? 'selected' : '';
-        options += `<option value="${p.id}" ${selected}>${escapeHtml(p.name)}</option>`;
-    }
-    select.innerHTML = options;
-
-    if (S.selectedPromptId) {
-        const found = prompts.find(p => p.id === S.selectedPromptId);
-        if (found && nameInput && contentInput) {
-            nameInput.value = found.name;
-            contentInput.value = found.content;
-        }
-        if (deleteBtn) deleteBtn.style.display = '';
-    } else {
-        if (nameInput) nameInput.value = '';
-        if (contentInput) contentInput.value = '';
-        if (deleteBtn) deleteBtn.style.display = 'none';
-    }
-}
-
 export function bindSettingsEvents() {
-    const select = document.getElementById('sim-prompt-select');
-    const saveBtn = document.getElementById('sim-save-prompt-btn');
-    const deleteBtn = document.getElementById('sim-delete-prompt-btn');
-
-    document.getElementById('sim-settings-prompt-search')?.addEventListener('input', (e) => {
-        const query = e.target.value.toLowerCase().trim();
-        if (!select) return;
-        ensureSettings();
-        const prompts = getSavedPrompts();
-        let options = `<option value="">-- 새 프롬프트 --</option>`;
-        for (const p of prompts) {
-            if (!query || p.name.toLowerCase().includes(query) || p.content.toLowerCase().includes(query)) {
-                options += `<option value="${p.id}">${escapeHtml(p.name)}</option>`;
-            }
-        }
-        select.innerHTML = options;
-        S.selectedPromptId = null;
-        renderSettingsSavedPrompts();
-    });
-
-    select?.addEventListener('change', () => {
-        S.selectedPromptId = select.value || null;
-        renderSettingsSavedPrompts();
-    });
-
-    saveBtn?.addEventListener('click', promptStorageAction(async () => {
-        const nameInput = document.getElementById('sim-new-prompt-name');
-        const contentInput = document.getElementById('sim-new-prompt-content');
-        const name = nameInput?.value.trim();
-        const content = contentInput?.value.trim();
-
-        if (!name || !content) {
-            alert('이름과 내용을 모두 입력해주세요.');
-            return;
-        }
-
-        ensureSettings();
-        const selectedId = S.selectedPromptId;
-        const id = selectedId || `prompt_${uuidv4()}`;
-        if (!await updateSavedPrompts(prompts => {
-            if (selectedId) {
-                const found = prompts.find(p => p.id === selectedId);
-                if (found) { found.name = name; found.content = content; }
-            } else {
-                prompts.push({ id, name, content });
-            }
-        })) return;
-        S.selectedPromptId = id;
-
-        renderSettingsSavedPrompts();
-        if (typeof toastr !== 'undefined') toastr.success('저장되었습니다.', '시뮬 매니저');
-    }));
-
-    deleteBtn?.addEventListener('click', promptStorageAction(async () => {
-        if (!S.selectedPromptId) return;
-        if (!confirm('이 프롬프트를 삭제하시겠습니까?')) return;
-
-        ensureSettings();
-        const id = S.selectedPromptId;
-        if (!await updateSavedPrompts(prompts => {
-            const idx = prompts.findIndex(p => p.id === id);
-            if (idx !== -1) prompts.splice(idx, 1);
-        })) return;
-        S.selectedPromptId = null;
-        renderSettingsSavedPrompts();
-        if (typeof toastr !== 'undefined') toastr.info('삭제되었습니다.', '시뮬 매니저');
-    }));
-
     // 프롬프트 관리 버튼
     document.getElementById('sim-open-prompt-manager-btn')?.addEventListener('click', () => {
         S.currentView = 'promptManager';

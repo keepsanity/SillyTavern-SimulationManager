@@ -16,7 +16,7 @@ export function sleep(ms) {
 }
 
 export function normalizeSimPosition(v) {
-    return Object.values(SIM_POSITIONS).includes(v) ? v : SIM_POSITIONS.LAST_MESSAGE;
+    return Object.values(SIM_POSITIONS).includes(v) ? v : SIM_POSITIONS.DEPTH_0;
 }
 
 // ============================================

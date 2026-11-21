@@ -14,7 +14,7 @@ import { eventSource, event_types, main_api, stopGeneration } from '../../../../
 import { extension_settings } from '../../../extensions.js';
 import { promptManager, oai_settings } from '../../../openai.js';
 import { EXTENSION_NAME, DEBUG_PREFIX, SIM_POSITION_LABELS } from './constants.js';
-import { escapeHtml, copyTextToClipboard } from './utils.js';
+import { escapeHtml, copyTextToClipboard, normalizeSimPosition } from './utils.js';
 import { getCurrentPresetName } from './preset.js';
 
 // 현재 인터셉트 대상 생성의 메타. null 이면 이 확장이 띄운 생성이 아니므로 무시.
@@ -232,7 +232,7 @@ function showPromptPreviewModal(view) {
         const { meta, messages } = view;
         const totalChars = messages.reduce((s, m) => s + m.content.length, 0);
         const totalTokens = messages.reduce((s, m) => s + (m.tokens || 0), 0);
-        const positionLabel = SIM_POSITION_LABELS[meta.position] || '';
+        const positionLabel = meta.position ? SIM_POSITION_LABELS[normalizeSimPosition(meta.position)] : '';
         const presetName = getCurrentPresetName();
 
         const chips = [
